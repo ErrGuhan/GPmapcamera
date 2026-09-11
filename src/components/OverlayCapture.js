@@ -8,19 +8,13 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import ViewShot from 'react-native-view-shot';
+import WatermarkBadge from './WatermarkBadge';
 import { COLORS } from '../constants/theme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 /**
- * On-screen compositing component.
- *
- * When `compositePhoto` is called:
- * 1. Renders the captured raw photo in a full-screen view with the watermark
- *    banner anchored at the bottom.
- * 2. Waits for Image paint.
- * 3. Uses ViewShot to snapshot the rendered view into a new watermarked JPEG.
- * 4. Resolves with the watermarked file URI.
+ * On-screen compositing component with dynamic orientation rotation.
  */
 const OverlayCapture = forwardRef((props, ref) => {
   const viewShotRef = useRef(null);
@@ -29,13 +23,27 @@ const OverlayCapture = forwardRef((props, ref) => {
   const capturedFlagRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
-    compositePhoto: ({ photoUri, coords, address, dateTime, mapUri }) => {
+    compositePhoto: ({
+      photoUri,
+      coords,
+      address,
+      dateTime,
+      mapUri,
+      rotationDegrees = 0,
+    }) => {
       return new Promise((resolve) => {
         capturedFlagRef.current = false;
         promiseResolverRef.current = resolve;
-        setData({ photoUri, coords, address, dateTime, mapUri });
+        setData({
+          photoUri,
+          coords,
+          address,
+          dateTime,
+          mapUri,
+          rotationDegrees,
+        });
 
-        // Safety fallback: if onLoad does not fire within 1200ms, force capture
+        // Safety timeout in case onLoad does not fire
         setTimeout(() => {
           triggerCapture();
         }, 1200);
@@ -76,7 +84,24 @@ const OverlayCapture = forwardRef((props, ref) => {
 
   if (!data) return null;
 
-  const isDummyMap = !data.mapUri || data.mapUri.includes('YOUR_GOOGLE_MAPS_API_KEY');
+  const deg = data.rotationDegrees || 0;
+
+  // Calculate positioning style based on orientation
+  let badgePositionStyle = styles.badgePortrait;
+  let transformStyle = { transform: [{ rotate: '0deg' }] };
+
+  if (deg === 90) {
+    // Landscape Left (rotated 90deg counter-clockwise)
+    badgePositionStyle = styles.badgeLandscapeLeft;
+    transformStyle = { transform: [{ rotate: '90deg' }] };
+  } else if (deg === 270) {
+    // Landscape Right (rotated 90deg clockwise)
+    badgePositionStyle = styles.badgeLandscapeRight;
+    transformStyle = { transform: [{ rotate: '-90deg' }] };
+  } else if (deg === 180) {
+    badgePositionStyle = styles.badgeInverted;
+    transformStyle = { transform: [{ rotate: '180deg' }] };
+  }
 
   return (
     <View style={styles.fullscreenModal} pointerEvents="none">
@@ -94,52 +119,18 @@ const OverlayCapture = forwardRef((props, ref) => {
           }}
         />
 
-        {/* Watermark Banner */}
-        <View style={styles.watermarkBanner}>
-          <View style={styles.accentBar} />
-          <View style={styles.overlayContent}>
-            {/* Map thumbnail or pin badge */}
-            {!isDummyMap ? (
-              <Image source={{ uri: data.mapUri }} style={styles.mapThumb} />
-            ) : (
-              <View style={styles.mapPlaceholder}>
-                <Text style={styles.mapPin}>📍</Text>
-                <Text style={styles.mapLabel}>GPS</Text>
-              </View>
-            )}
-
-            {/* Address & GPS metadata */}
-            <View style={styles.textBlock}>
-              <View style={styles.brandRow}>
-                <Text style={styles.brandTag}>GPS MAP CAMERA</Text>
-              </View>
-
-              <Text style={styles.title} numberOfLines={2}>
-                {data.address?.city || 'Current Location'}
-                {data.address?.region ? `, ${data.address.region}` : ''}
-                {data.address?.country ? `, ${data.address.country}` : ''}
-              </Text>
-
-              {data.coords && (
-                <Text style={styles.coordsText}>
-                  Lat {data.coords.latitude?.toFixed(6)}°  Long {data.coords.longitude?.toFixed(6)}°
-                </Text>
-              )}
-
-              {data.address?.street ? (
-                <Text style={styles.streetText} numberOfLines={1}>
-                  {data.address.street}
-                  {data.address.postalCode ? ` - ${data.address.postalCode}` : ''}
-                </Text>
-              ) : null}
-
-              <Text style={styles.dateText}>{data.dateTime}</Text>
-            </View>
-          </View>
+        {/* Rotated Watermark Badge */}
+        <View style={[badgePositionStyle, transformStyle]}>
+          <WatermarkBadge
+            address={data.address}
+            coords={data.coords}
+            dateTime={data.dateTime}
+            mapUri={data.mapUri}
+          />
         </View>
       </ViewShot>
 
-      {/* Saving indicator overlay */}
+      {/* Processing Feedback */}
       <View style={styles.savingBadge}>
         <ActivityIndicator color={COLORS.accent} size="small" />
         <Text style={styles.savingText}>Stamping watermark & saving...</Text>
@@ -163,87 +154,29 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
   },
-  watermarkBanner: {
+  badgePortrait: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    bottom: 30,
+    left: 14,
+    right: 14,
   },
-  accentBar: {
-    height: 3,
-    backgroundColor: COLORS.accent,
-    width: '100%',
+  badgeInverted: {
+    position: 'absolute',
+    top: 30,
+    left: 14,
+    right: 14,
   },
-  overlayContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+  badgeLandscapeLeft: {
+    position: 'absolute',
+    left: -60,
+    bottom: 220,
+    width: 360,
   },
-  mapThumb: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: COLORS.accent,
-  },
-  mapPlaceholder: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    backgroundColor: '#1e293b',
-    borderWidth: 1.5,
-    borderColor: COLORS.accent,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mapPin: {
-    fontSize: 32,
-  },
-  mapLabel: {
-    color: COLORS.accent,
-    fontSize: 10,
-    fontWeight: 'bold',
-    marginTop: 2,
-    letterSpacing: 1,
-  },
-  textBlock: {
-    marginLeft: 14,
-    flex: 1,
-    justifyContent: 'center',
-  },
-  brandRow: {
-    marginBottom: 2,
-  },
-  brandTag: {
-    color: COLORS.accent,
-    fontSize: 10,
-    fontWeight: 'bold',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  title: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: 'bold',
-    lineHeight: 19,
-  },
-  coordsText: {
-    color: COLORS.accent,
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  streetText: {
-    color: '#e2e8f0',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  dateText: {
-    color: '#cbd5e1',
-    fontSize: 11,
-    marginTop: 2,
+  badgeLandscapeRight: {
+    position: 'absolute',
+    right: -60,
+    bottom: 220,
+    width: 360,
   },
   savingBadge: {
     position: 'absolute',
