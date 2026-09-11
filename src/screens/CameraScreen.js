@@ -41,7 +41,7 @@ export default function CameraScreen({ navigation }) {
   const [mediaPermission, setMediaPermission] = useState({ granted: true });
 
   // Camera Settings
-  const [facing, setFacing] = useState('back');
+  const [facing, setFacing] = useState(Platform.OS === 'web' ? 'front' : 'back');
   const [flash, setFlash] = useState('off'); // 'off' | 'auto' | 'on'
   const [showGrid, setShowGrid] = useState(false);
   const [zoom, setZoom] = useState(0); // 0 = 1x, 0.25 = 2x
@@ -68,11 +68,13 @@ export default function CameraScreen({ navigation }) {
       } catch (e) {
         console.warn('Camera permission request error:', e);
       }
-      try {
-        const perm = await MediaLibrary.getPermissionsAsync(true);
-        setMediaPermission(perm);
-      } catch {
-        setMediaPermission({ granted: true });
+      if (Platform.OS !== 'web') {
+        try {
+          const perm = await MediaLibrary.getPermissionsAsync(true);
+          setMediaPermission(perm);
+        } catch {
+          setMediaPermission({ granted: true });
+        }
       }
       try {
         const captures = await getLocalCaptures();
@@ -199,10 +201,12 @@ export default function CameraScreen({ navigation }) {
         });
       }
 
-      try {
-        await MediaLibrary.saveToLibraryAsync(finalUri);
-      } catch (err) {
-        console.warn('System gallery save notice:', err.message);
+      if (Platform.OS !== 'web') {
+        try {
+          await MediaLibrary.saveToLibraryAsync(finalUri);
+        } catch (err) {
+          console.warn('System gallery save notice:', err.message);
+        }
       }
 
       await saveLocalCapture({

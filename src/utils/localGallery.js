@@ -1,14 +1,16 @@
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 
 const LOCAL_CAPTURES_KEY = '@gmc_local_captures';
 const PENDING_QUEUE_KEY = '@gmc_pending_uploads';
-const CAPTURES_DIR = `${FileSystem.documentDirectory}GPS_Captures/`;
+const CAPTURES_DIR = `${FileSystem.documentDirectory || ''}GPS_Captures/`;
 
 /**
  * Ensures the persistent directory exists in the app's document storage.
  */
 async function ensureDirectoryExists() {
+  if (Platform.OS === 'web') return;
   try {
     const dirInfo = await FileSystem.getInfoAsync(CAPTURES_DIR);
     if (!dirInfo.exists) {
@@ -32,6 +34,7 @@ export async function clearLegacyUploadQueue() {
 
 /**
  * Saves a watermarked photo to persistent local memory and registers it in AsyncStorage.
+ * On web, stores directly in AsyncStorage and triggers a browser file download.
  *
  * @param {object} params
  * @param {string} params.uri - Local file URI of the watermarked image
@@ -42,6 +45,36 @@ export async function clearLegacyUploadQueue() {
  */
 export async function saveLocalCapture({ uri, address, coords, dateTime }) {
   try {
+    const item = {
+      id: `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      uri: uri,
+      address: address || {},
+      coords: coords || {},
+      dateTime: dateTime || new Date().toLocaleString(),
+      createdAt: new Date().toISOString(),
+    };
+
+    if (Platform.OS === 'web') {
+      // Trigger automatic browser file download on Web
+      try {
+        if (typeof document !== 'undefined') {
+          const a = document.createElement('a');
+          a.href = uri;
+          a.download = `GMC_${Date.now()}.jpg`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      } catch (dlErr) {
+        console.warn('Web download notice:', dlErr);
+      }
+
+      const existing = await getLocalCaptures();
+      const updated = [item, ...existing];
+      await AsyncStorage.setItem(LOCAL_CAPTURES_KEY, JSON.stringify(updated));
+      return item;
+    }
+
     await ensureDirectoryExists();
     const filename = `GMC_${Date.now()}.jpg`;
     const destinationUri = `${CAPTURES_DIR}${filename}`;
@@ -52,14 +85,7 @@ export async function saveLocalCapture({ uri, address, coords, dateTime }) {
       to: destinationUri,
     });
 
-    const item = {
-      id: `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-      uri: destinationUri,
-      address: address || {},
-      coords: coords || {},
-      dateTime: dateTime || new Date().toLocaleString(),
-      createdAt: new Date().toISOString(),
-    };
+    item.uri = destinationUri;
 
     const existing = await getLocalCaptures();
     const updated = [item, ...existing];
@@ -98,7 +124,7 @@ export async function deleteLocalCapture(id) {
   try {
     const existing = await getLocalCaptures();
     const target = existing.find((item) => item.id === id);
-    if (target?.uri) {
+    if (target?.uri && Platform.OS !== 'web') {
       try {
         await FileSystem.deleteAsync(target.uri, { idempotent: true });
       } catch (delErr) {

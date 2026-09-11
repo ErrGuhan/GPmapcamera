@@ -14,6 +14,15 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "name": "GPS Map Camera",
+      "shortName": "GPS Camera",
+      "description": "Geotagged photos with GPS coordinates, map preview, and timestamp watermark.",
+      "themeColor": "#000000",
+      "backgroundColor": "#000000"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yourname.gpsmapcamera",

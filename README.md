@@ -194,3 +194,38 @@ silently discarded.
 3. Settings screen: map style, coordinate format, unit toggle (metric/imperial)
 4. Offline reverse-geocoding fallback (cache last known address)
 5. Background upload queue with expo-background-fetch
+
+---
+
+## Deploying to Vercel
+
+The codebase is fully optimized for continuous deployment on [Vercel](https://vercel.com).
+
+### 1. Push Code to GitHub
+Ensure your repository is pushed to GitHub:
+```bash
+git push origin main
+```
+
+### 2. Import into Vercel
+1. Go to [Vercel Dashboard](https://vercel.com/new).
+2. Click **Add New** → **Project** and select your GitHub repository (`GPmapcamera`).
+3. Vercel automatically detects the pre-configured settings from `vercel.json`:
+   - **Framework Preset**: Other / None
+   - **Build Command**: `npm run build` (`expo export -p web`)
+   - **Output Directory**: `dist`
+
+### 3. Environment Variables (in Vercel Dashboard)
+Under **Environment Variables**, add:
+| Variable Name | Description | Example |
+|---|---|---|
+| `SUPABASE_URL` | Your Supabase project URL | `https://xyzcompany.supabase.co` |
+| `SUPABASE_ANON_KEY` | Your Supabase Anon public key | `eyJhbGciOi...` |
+| `EXPO_PUBLIC_SUPABASE_URL` | Optional alternative for Expo | Same as `SUPABASE_URL` |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Optional alternative for Expo | Same as `SUPABASE_ANON_KEY` |
+
+*(If deploying before setting environment variables, the app will safely load with a fallback message rather than crashing.)*
+
+### 4. Click Deploy
+Vercel will install dependencies, bundle the web application into `dist/`, and provision global edge caching with immutable asset caching and SPA rewrites.
+
