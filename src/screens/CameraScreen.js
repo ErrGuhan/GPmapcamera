@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
 
 import OverlayCapture from '../components/OverlayCapture';
@@ -160,10 +161,36 @@ export default function CameraScreen({ navigation }) {
       const currentDateTime = getFormattedDateTime();
       const mapUri = getStaticMapUrl(coords.latitude, coords.longitude, GOOGLE_STATIC_MAPS_API_KEY);
 
-      let finalUri = photo.uri;
+      // Orient photo for landscape captures:
+      // Because Android app orientation is locked to portrait in app.json, the camera
+      // sensor delivers a portrait-oriented buffer. If the user held the phone in landscape,
+      // we rotate the photo so the saved image is a true landscape photo (width > height) and upright.
+      let orientedPhotoUri = photo.uri;
+      let rotatedTempUri = null;
+
+      const isLandscapeCapture = rotationDegrees === 90 || rotationDegrees === 270;
+      if (isLandscapeCapture) {
+        try {
+          const rotateAngle = rotationDegrees === 90 ? 270 : 90;
+          const manipulated = await ImageManipulator.manipulateAsync(
+            photo.uri,
+            [{ rotate: rotateAngle }],
+            { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
+          );
+          if (manipulated?.uri) {
+            orientedPhotoUri = manipulated.uri;
+            rotatedTempUri = manipulated.uri;
+          }
+        } catch (manipErr) {
+          console.warn('Image rotation warning:', manipErr);
+          orientedPhotoUri = photo.uri;
+        }
+      }
+
+      let finalUri = orientedPhotoUri;
       if (overlayRef.current?.compositePhoto) {
         finalUri = await overlayRef.current.compositePhoto({
-          photoUri: photo.uri,
+          photoUri: orientedPhotoUri,
           coords,
           address,
           dateTime: currentDateTime,
@@ -187,6 +214,9 @@ export default function CameraScreen({ navigation }) {
 
       if (finalUri !== photo.uri) {
         await cleanupTempFile(photo.uri);
+      }
+      if (rotatedTempUri && rotatedTempUri !== finalUri) {
+        await cleanupTempFile(rotatedTempUri);
       }
 
       setSavedCount((c) => c + 1);

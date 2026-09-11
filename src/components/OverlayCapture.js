@@ -14,10 +14,12 @@ import { COLORS } from '../constants/theme';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 /**
- * On-screen compositing component with precise Portrait vs Landscape placement.
+ * On-screen compositing component.
+ *
  * Ensures:
- * - In Portrait: Watermark is in the bottom center of the image.
- * - In Landscape: Watermark sits in the bottom center of the landscape view.
+ * - Portrait captures: Tall canvas, watermark at bottom center, horizontal (0°).
+ * - Landscape captures: Wide canvas, watermark at bottom center, horizontal (0°).
+ * The watermark is NEVER tilted or rotated sideways on the photo!
  */
 const OverlayCapture = forwardRef((props, ref) => {
   const viewShotRef = useRef(null);
@@ -59,7 +61,7 @@ const OverlayCapture = forwardRef((props, ref) => {
     capturedFlagRef.current = true;
 
     try {
-      // Small pause to ensure native paint
+      // Small pause to guarantee native paint
       await new Promise((r) => setTimeout(r, 180));
 
       if (viewShotRef.current?.capture) {
@@ -88,46 +90,41 @@ const OverlayCapture = forwardRef((props, ref) => {
   if (!data) return null;
 
   const deg = data.rotationDegrees || 0;
+  const isLandscape = deg === 90 || deg === 270;
 
-  // Compute exact positioning so the watermark is strictly at the BOTTOM CENTER
-  // of either the portrait or landscape image.
-  let badgeStyle = {
+  // Responsive canvas dimensions:
+  // In portrait: tall canvas (e.g. 390x844)
+  // In landscape: wide canvas (e.g. 844x390)
+  const canvasWidth = isLandscape
+    ? Math.max(SCREEN_WIDTH, SCREEN_HEIGHT)
+    : Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
+  const canvasHeight = isLandscape
+    ? Math.min(SCREEN_WIDTH, SCREEN_HEIGHT)
+    : Math.max(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+  // In BOTH Portrait and Landscape, the watermark is ALWAYS horizontal (0°),
+  // anchored right at the BOTTOM CENTER of the photo!
+  const badgeStyle = {
     position: 'absolute',
-    left: (SCREEN_WIDTH - BADGE_WIDTH) / 2,
     bottom: 24,
-    transform: [{ rotate: '0deg' }],
+    left: (canvasWidth - BADGE_WIDTH) / 2,
+    width: BADGE_WIDTH,
+    transform: [{ rotate: '0deg' }], // Never tilted!
   };
 
-  if (deg === 90) {
-    // Landscape Left (top of phone tilted left):
-    // In portrait coordinates, the landscape bottom center is the right edge, vertically centered.
-    const centerX = SCREEN_WIDTH - BADGE_HEIGHT / 2 - 20;
-    const centerY = SCREEN_HEIGHT / 2;
-    badgeStyle = {
-      position: 'absolute',
-      left: centerX - BADGE_WIDTH / 2,
-      top: centerY - BADGE_HEIGHT / 2,
-      transform: [{ rotate: '90deg' }],
-    };
-  } else if (deg === 270) {
-    // Landscape Right (top of phone tilted right):
-    // In portrait coordinates, the landscape bottom center is the left edge, vertically centered.
-    const centerX = BADGE_HEIGHT / 2 + 20;
-    const centerY = SCREEN_HEIGHT / 2;
-    badgeStyle = {
-      position: 'absolute',
-      left: centerX - BADGE_WIDTH / 2,
-      top: centerY - BADGE_HEIGHT / 2,
-      transform: [{ rotate: '-90deg' }],
-    };
-  }
-
   return (
-    <View style={styles.fullscreenModal} pointerEvents="none">
+    <View style={styles.fullscreenModal} pointerEvents="none" collapsable={false}>
       <ViewShot
         ref={viewShotRef}
         options={{ format: 'jpg', quality: 0.95, result: 'tmpfile' }}
-        style={styles.canvas}
+        collapsable={false}
+        style={{
+          width: canvasWidth,
+          height: canvasHeight,
+          backgroundColor: '#000',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
       >
         <Image
           source={{ uri: data.photoUri }}
@@ -138,7 +135,7 @@ const OverlayCapture = forwardRef((props, ref) => {
           }}
         />
 
-        {/* Rotated Watermark Badge at Bottom Center */}
+        {/* Watermark Badge always at Bottom Center, never tilted */}
         <View style={badgeStyle}>
           <WatermarkBadge
             address={data.address}
@@ -165,13 +162,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  canvas: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-    backgroundColor: '#000',
-    position: 'relative',
-    overflow: 'hidden',
+    overflow: 'visible',
   },
   savingBadge: {
     position: 'absolute',
