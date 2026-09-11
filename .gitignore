@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Local env — contains real credentials, never commit
+.env
+
+# OS
+.DS_Store
+Thumbs.db

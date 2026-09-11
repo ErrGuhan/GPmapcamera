@@ -1,0 +1,209 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
+import { supabase } from '../lib/supabase';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const PENDING_QUEUE_KEY = '@gmc_pending_uploads';
+const STORAGE_BUCKET = 'captures';
+
+// ---------------------------------------------------------------------------
+// Storage helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads a local file URI and converts it to an ArrayBuffer for Supabase upload.
+ * expo-file-system reads as base64; base64-arraybuffer decodes to ArrayBuffer.
+ */
+async function readFileAsArrayBuffer(uri) {
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return decode(base64);
+}
+
+// ---------------------------------------------------------------------------
+// Core upload function
+// ---------------------------------------------------------------------------
+
+/**
+ * Uploads the composited photo to Supabase Storage and inserts a metadata
+ * row into the `captures` table.
+ *
+ * @param {string} finalUri - Local file:// URI of the composited photo
+ * @param {string} userId   - Authenticated user's UUID
+ * @param {object} metadata - { latitude, longitude, address, capturedAt }
+ * @returns {Promise<{ storagePath: string }>}
+ * @throws If either the storage upload or DB insert fails
+ */
+export async function uploadCapture(finalUri, userId, metadata) {
+  const { latitude, longitude, address, capturedAt } = metadata;
+
+  // Build the storage path: <user_id>/<timestamp>.jpg
+  // Using capturedAt ISO string with colons replaced so it's filesystem-safe.
+  const timestamp = capturedAt
+    ? new Date(capturedAt).toISOString().replace(/[:.]/g, '-')
+    : Date.now().toString();
+  const storagePath = `${userId}/${timestamp}.jpg`;
+
+  // 1. Read the file and upload to Supabase Storage
+  const fileBytes = await readFileAsArrayBuffer(finalUri);
+
+  const { error: storageError } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(storagePath, fileBytes, {
+      contentType: 'image/jpeg',
+      upsert: false,
+    });
+
+  if (storageError) {
+    throw new Error(`Storage upload failed: ${storageError.message}`);
+  }
+
+  // 2. Insert metadata row into the captures table
+  const { error: dbError } = await supabase.from('captures').insert({
+    user_id: userId,
+    media_type: 'photo',
+    storage_path: storagePath,
+    latitude: latitude ?? null,
+    longitude: longitude ?? null,
+    address_city: address?.city ?? null,
+    address_region: address?.region ?? null,
+    address_country: address?.country ?? null,
+    captured_at: capturedAt ?? new Date().toISOString(),
+  });
+
+  if (dbError) {
+    // The file uploaded but the DB insert failed. Attempt cleanup so Storage
+    // doesn't accumulate orphaned files, but don't throw on cleanup failure.
+    await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]).catch(() => {});
+    throw new Error(`DB insert failed: ${dbError.message}`);
+  }
+
+  return { storagePath };
+}
+
+// ---------------------------------------------------------------------------
+// Offline pending-upload queue (AsyncStorage)
+// ---------------------------------------------------------------------------
+
+/**
+ * Adds a failed upload to the persistent queue so it can be retried later.
+ *
+ * @param {object} item - { id, localUri, userId, metadata }
+ */
+export async function enqueuePendingUpload(item) {
+  try {
+    const existing = await getPendingUploads();
+    // Avoid duplicating the same capture if enqueue is called multiple times
+    const alreadyQueued = existing.some((q) => q.id === item.id);
+    if (alreadyQueued) return;
+    const updated = [...existing, item];
+    await AsyncStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.warn('[uploadQueue] Failed to enqueue:', e);
+  }
+}
+
+/**
+ * Returns all items currently in the pending-upload queue.
+ * @returns {Promise<Array>}
+ */
+export async function getPendingUploads() {
+  try {
+    const raw = await AsyncStorage.getItem(PENDING_QUEUE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Removes a successfully uploaded item from the queue by its id.
+ * @param {string} id
+ */
+export async function clearPendingUpload(id) {
+  try {
+    const existing = await getPendingUploads();
+    const updated = existing.filter((q) => q.id !== id);
+    await AsyncStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.warn('[uploadQueue] Failed to clear item:', e);
+  }
+}
+
+/**
+ * Tries to upload every item in the pending queue.
+ * Successfully uploaded items are removed from the queue.
+ * Failed items remain for the next retry attempt.
+ *
+ * This function is intentionally non-throwing — individual failures are
+ * caught and logged so one bad item doesn't block the rest of the queue.
+ *
+ * @param {string} userId - The logged-in user's UUID (skip if no session)
+ * @returns {Promise<{ succeeded: number, failed: number }>}
+ */
+export async function retryPendingUploads(userId) {
+  if (!userId) return { succeeded: 0, failed: 0 };
+
+  const queue = await getPendingUploads();
+  if (queue.length === 0) return { succeeded: 0, failed: 0 };
+
+  console.log(`[uploadQueue] Retrying ${queue.length} pending upload(s)…`);
+
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const item of queue) {
+    // Only process items belonging to this user (safety check for multi-user
+    // devices, though in practice the queue is device-local).
+    if (item.userId !== userId) continue;
+
+    try {
+      // Check the local file still exists before attempting upload
+      const fileInfo = await FileSystem.getInfoAsync(item.localUri);
+      if (!fileInfo.exists) {
+        // File was deleted (e.g. user cleared cache) — remove from queue
+        console.warn('[uploadQueue] Local file missing, discarding:', item.id);
+        await clearPendingUpload(item.id);
+        continue;
+      }
+
+      await uploadCapture(item.localUri, userId, item.metadata);
+      await clearPendingUpload(item.id);
+      succeeded++;
+      console.log(`[uploadQueue] Retried successfully: ${item.id}`);
+    } catch (e) {
+      failed++;
+      console.warn(`[uploadQueue] Retry failed for ${item.id}:`, e.message);
+    }
+  }
+
+  return { succeeded, failed };
+}
+
+// ---------------------------------------------------------------------------
+// Signed URL helper (used by GalleryScreen cloud tab)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a short-lived signed URL for a private Storage object.
+ * Default expiry: 3600 seconds (1 hour).
+ *
+ * @param {string} storagePath - e.g. "<user_id>/<timestamp>.jpg"
+ * @param {number} [expiresIn=3600]
+ * @returns {Promise<string|null>} signed URL or null on failure
+ */
+export async function getSignedUrl(storagePath, expiresIn = 3600) {
+  const { data, error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrl(storagePath, expiresIn);
+
+  if (error) {
+    console.warn('[uploadQueue] Failed to create signed URL:', error.message);
+    return null;
+  }
+  return data.signedUrl;
+}
