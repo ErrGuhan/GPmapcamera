@@ -47,7 +47,6 @@ export default function CameraScreen({ navigation }) {
   const [zoom, setZoom] = useState(0); // 0 = 1x, 0.25 = 2x
   const [activeZoomLabel, setActiveZoomLabel] = useState('1x');
   const [exposure, setExposure] = useState(0); // -2 to +2
-  const [activeMode, setActiveMode] = useState('PHOTO'); // 'SHARE PHOTO' | 'PHOTO' | 'VIDEO' | 'REPORTS'
 
   // Location & State
   const [isCapturing, setIsCapturing] = useState(false);
@@ -135,14 +134,20 @@ export default function CameraScreen({ navigation }) {
     else if (label === '2x') setZoom(0.25);
   };
 
-  // Vertical Exposure Slider PanResponder
+  // Vertical Exposure Slider PanResponder with render-throttling
+  const exposureRef = useRef(exposure);
+  exposureRef.current = exposure;
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onPanResponderMove: (evt, gestureState) => {
         const delta = -gestureState.dy / 40;
         const clamped = Math.max(-2, Math.min(2, Math.round(delta * 2) / 2));
-        setExposure(clamped);
+        if (clamped !== exposureRef.current) {
+          exposureRef.current = clamped;
+          setExposure(clamped);
+        }
       },
     })
   ).current;
@@ -280,7 +285,7 @@ export default function CameraScreen({ navigation }) {
   let liveBadgePositionStyle = {
     position: 'absolute',
     left: (SCREEN_WIDTH - BADGE_WIDTH) / 2,
-    bottom: 145,
+    bottom: 148,
     zIndex: 15,
   };
 
@@ -326,34 +331,14 @@ export default function CameraScreen({ navigation }) {
           </View>
         )}
 
-        {/* Center Focus Reticle */}
-        <View style={styles.focusContainer} pointerEvents="none">
-          <View style={styles.focusRing} />
-        </View>
-
         {/* Off-screen/On-screen Compositing View */}
         <OverlayCapture ref={overlayRef} />
 
         {/* ================================================================= */}
-        {/* Top Controls Bar */}
+        {/* Top Controls Bar (Streamlined to 4 Essential Controls) */}
         {/* ================================================================= */}
         <View style={styles.topBar}>
-          {/* 1. Grid Toggle */}
-          <TouchableOpacity
-            style={styles.topBarBtn}
-            onPress={() => setShowGrid(!showGrid)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Animated.View style={rotationStyle}>
-              <Ionicons
-                name={showGrid ? 'grid' : 'grid-outline'}
-                size={22}
-                color={showGrid ? COLORS.accent : '#fff'}
-              />
-            </Animated.View>
-          </TouchableOpacity>
-
-          {/* 2. Flash Mode */}
+          {/* 1. Flash Mode */}
           <TouchableOpacity
             style={styles.topBarBtn}
             onPress={toggleFlash}
@@ -374,32 +359,7 @@ export default function CameraScreen({ navigation }) {
             </Animated.View>
           </TouchableOpacity>
 
-          {/* 3. Notes / Forms */}
-          <TouchableOpacity
-            style={styles.topBarBtn}
-            onPress={() => setShowLocationModal(true)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Animated.View style={rotationStyle}>
-              <Ionicons name="document-text-outline" size={22} color="#fff" />
-            </Animated.View>
-          </TouchableOpacity>
-
-          {/* 4. Aspect Ratio */}
-          <TouchableOpacity
-            style={styles.topBarBtn}
-            onPress={() => {
-              setToastMessage('Aspect ratio: Full');
-              setTimeout(() => setToastMessage(null), 1500);
-            }}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Animated.View style={rotationStyle}>
-              <Ionicons name="expand-outline" size={22} color="#fff" />
-            </Animated.View>
-          </TouchableOpacity>
-
-          {/* 5. Flip Camera */}
+          {/* 2. Flip Camera */}
           <TouchableOpacity
             style={styles.topBarBtn}
             onPress={toggleFacing}
@@ -410,7 +370,22 @@ export default function CameraScreen({ navigation }) {
             </Animated.View>
           </TouchableOpacity>
 
-          {/* 6. Settings */}
+          {/* 3. Grid Toggle */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => setShowGrid(!showGrid)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons
+                name={showGrid ? 'grid' : 'grid-outline'}
+                size={22}
+                color={showGrid ? COLORS.accent : '#fff'}
+              />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* 4. Settings */}
           <TouchableOpacity
             style={styles.topBarBtn}
             onPress={() => setShowSettingsModal(true)}
@@ -503,37 +478,17 @@ export default function CameraScreen({ navigation }) {
         </View>
 
         {/* ================================================================= */}
-        {/* Camera Mode Bar (SHARE PHOTO, PHOTO, VIDEO, REPORTS) */}
-        {/* ================================================================= */}
-        <View style={styles.modeBar}>
-          {['SHARE PHOTO', 'PHOTO', 'VIDEO', 'REPORTS'].map((mode) => {
-            const isActive = activeMode === mode;
-            return (
-              <TouchableOpacity
-                key={mode}
-                style={[styles.modeBtn, isActive && styles.modeBtnActive]}
-                onPress={() => setActiveMode(mode)}
-              >
-                <Text style={[styles.modeText, isActive && styles.modeTextActive]}>
-                  {mode}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* ================================================================= */}
-        {/* Bottom Controls Bar (Preview, Locations, Shutter, Storage, Template) */}
+        {/* Bottom Controls Bar (Preview, Locations, Shutter, Storage) */}
         {/* ================================================================= */}
         <View style={styles.bottomBar}>
           {/* Preview */}
           <TouchableOpacity
             style={styles.bottomIconBtn}
             onPress={() => navigation.navigate('Gallery')}
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
           >
             <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-              <Ionicons name="images-outline" size={23} color="#fff" />
+              <Ionicons name="images-outline" size={24} color="#fff" />
             </Animated.View>
             <Text style={styles.bottomLabel}>Preview</Text>
           </TouchableOpacity>
@@ -542,10 +497,10 @@ export default function CameraScreen({ navigation }) {
           <TouchableOpacity
             style={styles.bottomIconBtn}
             onPress={() => setShowLocationModal(true)}
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
           >
             <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-              <Ionicons name="location-outline" size={23} color={COLORS.accent} />
+              <Ionicons name="location-outline" size={24} color={COLORS.accent} />
             </Animated.View>
             <Text style={styles.bottomLabel}>Locations</Text>
           </TouchableOpacity>
@@ -568,30 +523,12 @@ export default function CameraScreen({ navigation }) {
           <TouchableOpacity
             style={styles.bottomIconBtn}
             onPress={() => navigation.navigate('Gallery')}
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
           >
             <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-              <Ionicons name="folder-outline" size={23} color="#fff" />
+              <Ionicons name="folder-outline" size={24} color="#fff" />
             </Animated.View>
             <Text style={styles.bottomLabel}>Storage</Text>
-          </TouchableOpacity>
-
-          {/* Template */}
-          <TouchableOpacity
-            style={styles.bottomIconBtn}
-            onPress={() => {
-              setToastMessage('Template 1: Modern Badge Active');
-              setTimeout(() => setToastMessage(null), 1500);
-            }}
-            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-          >
-            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-              <Ionicons name="apps-outline" size={23} color="#fff" />
-              <View style={styles.redBadge}>
-                <Text style={styles.redBadgeText}>1</Text>
-              </View>
-            </Animated.View>
-            <Text style={styles.bottomLabel}>Template</Text>
           </TouchableOpacity>
         </View>
 
@@ -765,19 +702,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
   },
 
-  // Focus Ring
-  focusContainer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  focusRing: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.85)',
-  },
+
 
   // Top Bar
   topBar: {
@@ -839,7 +764,7 @@ const styles = StyleSheet.create({
   // Zoom Selector (1x / 2x)
   zoomContainer: {
     position: 'absolute',
-    bottom: 140,
+    bottom: 96,
     alignSelf: 'center',
     zIndex: 20,
   },
@@ -870,56 +795,26 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 
-  // Mode Bar
-  modeBar: {
-    position: 'absolute',
-    bottom: 96,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    zIndex: 20,
-  },
-  modeBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  modeBtnActive: {
-    backgroundColor: COLORS.accent,
-  },
-  modeText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  modeTextActive: {
-    color: '#000000',
-  },
-
   // Bottom Controls Bar
   bottomBar: {
     position: 'absolute',
-    bottom: 14,
+    bottom: 16,
     left: 0,
     right: 0,
     flexDirection: 'row',
     justifyContent: 'space-evenly',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     zIndex: 20,
   },
   bottomIconBtn: {
     alignItems: 'center',
-    width: 60,
+    width: 64,
   },
   bottomIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
@@ -928,23 +823,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 11,
     fontWeight: '600',
-    marginTop: 2,
-  },
-  redBadge: {
-    position: 'absolute',
-    top: 2,
-    right: 4,
-    backgroundColor: '#ef4444',
-    width: 15,
-    height: 15,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  redBadgeText: {
-    color: '#fff',
-    fontSize: 9,
-    fontWeight: 'bold',
+    marginTop: 3,
   },
 
   // Shutter

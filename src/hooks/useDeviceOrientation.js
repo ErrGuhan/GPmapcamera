@@ -29,60 +29,63 @@ export function useDeviceOrientation() {
         let lastX = 0;
         let lastY = -1;
 
+        let currentOrientation = 'portrait';
+
         subscription = Accelerometer.addListener(({ x, y, z }) => {
           if (!isMounted) return;
 
-          // Smooth out sensor jitter
-          const alpha = 0.3;
+          // Smooth out sensor jitter with low-pass filter
+          const alpha = 0.25;
           const smoothX = alpha * x + (1 - alpha) * lastX;
           const smoothY = alpha * y + (1 - alpha) * lastY;
           lastX = smoothX;
           lastY = smoothY;
 
-          // When the phone is held in Portrait (even if tilted forward at a desk/laptop),
-          // we must stay strictly in Portrait (0°).
-          // Only transition to Landscape if horizontal tilt is clearly dominant.
-          let newOrientation = 'portrait';
-          let deg = 0;
-          let angle = 0;
-
           const absX = Math.abs(smoothX);
           const absY = Math.abs(smoothY);
 
-          // Require strong horizontal tilt to engage landscape
-          if (absX > 0.52 && absX > absY * 1.3) {
-            if (smoothX < -0.45) {
-              // Tilted counter-clockwise (top of phone points left)
-              newOrientation = 'landscape-left';
-              deg = 90;
-              angle = 90;
-            } else if (smoothX > 0.45) {
-              // Tilted clockwise (top of phone points right)
-              newOrientation = 'landscape-right';
-              deg = 270;
-              angle = -90;
+          // Robust hysteresis:
+          // In portrait: require strong intentional tilt (absX > 0.70 and horizontal dominance) to enter landscape.
+          // Once in landscape: stay in landscape until tilt drops significantly (absX < 0.45).
+          let newOrientation = currentOrientation;
+
+          if (currentOrientation === 'portrait') {
+            if (absX > 0.70 && absX > absY * 1.8) {
+              newOrientation = smoothX < 0 ? 'landscape-left' : 'landscape-right';
             }
           } else {
-            // Standard Portrait - always bottom center
-            newOrientation = 'portrait';
-            deg = 0;
-            angle = 0;
+            // Currently in landscape
+            if (absX < 0.45 || absY > absX * 1.2) {
+              newOrientation = 'portrait';
+            } else {
+              // Maintain or switch landscape side if direction reversed
+              newOrientation = smoothX < 0 ? 'landscape-left' : 'landscape-right';
+            }
           }
 
-          setOrientation((prev) => {
-            if (prev !== newOrientation) {
-              setRotationDegrees(deg);
-              setRotationAngle(angle);
+          let deg = 0;
+          let angle = 0;
+          if (newOrientation === 'landscape-left') {
+            deg = 90;
+            angle = 90;
+          } else if (newOrientation === 'landscape-right') {
+            deg = 270;
+            angle = -90;
+          }
 
-              Animated.spring(animatedRotation, {
-                toValue: angle,
-                useNativeDriver: true,
-                friction: 7,
-                tension: 40,
-              }).start();
-            }
-            return newOrientation;
-          });
+          if (newOrientation !== currentOrientation) {
+            currentOrientation = newOrientation;
+            setOrientation(newOrientation);
+            setRotationDegrees(deg);
+            setRotationAngle(angle);
+
+            Animated.spring(animatedRotation, {
+              toValue: angle,
+              useNativeDriver: true,
+              friction: 8,
+              tension: 45,
+            }).start();
+          }
         });
       } catch (e) {
         // Accelerometer not available in current web browser

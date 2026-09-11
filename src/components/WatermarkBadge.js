@@ -11,7 +11,7 @@ export const BADGE_HEIGHT = 88;
  * location header with country flag, detailed street/plus-code,
  * coordinates, date & time, and the top-right "GPS Map Camera" badge.
  */
-export default function WatermarkBadge({
+function WatermarkBadge({
   address,
   coords,
   dateTime,
@@ -198,3 +198,5 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 });
+
+export default React.memo(WatermarkBadge);
