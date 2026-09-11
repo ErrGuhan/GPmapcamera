@@ -4,63 +4,60 @@ import { Accelerometer } from 'expo-sensors';
 
 /**
  * Hook to track real-time physical device orientation via accelerometer.
- * Smooths sensor noise and outputs orientation angles (0, 90, 180, 270 degrees)
- * with an Animated.Value for silky smooth rotation transitions.
+ * Strictly separates Portrait (upright and downward tilt) from Landscape.
+ * Eliminates upside-down 180° tilt so the watermark stays firmly at the
+ * bottom center in portrait mode.
  */
 export function useDeviceOrientation() {
   const [orientation, setOrientation] = useState('portrait');
-  const [rotationDegrees, setRotationDegrees] = useState(0); // 0, 90, 180, 270
-  const [rotationAngle, setRotationAngle] = useState(0); // 0, 90, 180, -90 for transforms
+  const [rotationDegrees, setRotationDegrees] = useState(0); // 0, 90, 270
+  const [rotationAngle, setRotationAngle] = useState(0); // 0, 90, -90 for transforms
 
   const animatedRotation = useRef(new Animated.Value(0)).current;
-  const lastTargetAngle = useRef(0);
 
   useEffect(() => {
-    // Set accelerometer update interval to 150ms for responsive yet power-efficient tracking
-    Accelerometer.setUpdateInterval(150);
+    // 120ms update interval for responsive tilt detection
+    Accelerometer.setUpdateInterval(120);
 
     let lastX = 0;
     let lastY = -1;
 
     const subscription = Accelerometer.addListener(({ x, y, z }) => {
-      // Exponential moving average filter
-      const alpha = 0.25;
+      // Smooth out sensor jitter
+      const alpha = 0.3;
       const smoothX = alpha * x + (1 - alpha) * lastX;
       const smoothY = alpha * y + (1 - alpha) * lastY;
       lastX = smoothX;
       lastY = smoothY;
 
-      // Ignore if phone is lying almost flat on a table (|z| > 0.85)
-      if (Math.abs(z) > 0.85) return;
-
+      // When the phone is held in Portrait (even if tilted forward at a desk/laptop),
+      // we must stay strictly in Portrait (0°).
+      // Only transition to Landscape if horizontal tilt is clearly dominant.
       let newOrientation = 'portrait';
       let deg = 0;
       let angle = 0;
 
-      if (Math.abs(smoothX) > Math.abs(smoothY)) {
-        if (smoothX < -0.4) {
-          // Tilted left (top points to the left) -> Landscape Left
+      const absX = Math.abs(smoothX);
+      const absY = Math.abs(smoothY);
+
+      // Require strong horizontal tilt to engage landscape
+      if (absX > 0.52 && absX > absY * 1.3) {
+        if (smoothX < -0.45) {
+          // Tilted counter-clockwise (top of phone points left)
           newOrientation = 'landscape-left';
           deg = 90;
           angle = 90;
-        } else if (smoothX > 0.4) {
-          // Tilted right (top points to the right) -> Landscape Right
+        } else if (smoothX > 0.45) {
+          // Tilted clockwise (top of phone points right)
           newOrientation = 'landscape-right';
           deg = 270;
           angle = -90;
         }
       } else {
-        if (smoothY > 0.45) {
-          // Upside down
-          newOrientation = 'portrait-upside-down';
-          deg = 180;
-          angle = 180;
-        } else {
-          // Portrait standard upright
-          newOrientation = 'portrait';
-          deg = 0;
-          angle = 0;
-        }
+        // Standard Portrait - always bottom center
+        newOrientation = 'portrait';
+        deg = 0;
+        angle = 0;
       }
 
       setOrientation((prev) => {
@@ -68,7 +65,6 @@ export function useDeviceOrientation() {
           setRotationDegrees(deg);
           setRotationAngle(angle);
 
-          // Animate the rotation value smoothly
           Animated.spring(animatedRotation, {
             toValue: angle,
             useNativeDriver: true,
@@ -86,8 +82,8 @@ export function useDeviceOrientation() {
   }, [animatedRotation]);
 
   const rotationInterpolate = animatedRotation.interpolate({
-    inputRange: [-90, 0, 90, 180],
-    outputRange: ['-90deg', '0deg', '90deg', '180deg'],
+    inputRange: [-90, 0, 90],
+    outputRange: ['-90deg', '0deg', '90deg'],
   });
 
   return {

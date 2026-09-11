@@ -1,6 +1,9 @@
 import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 
+export const BADGE_WIDTH = 340;
+export const BADGE_HEIGHT = 88;
+
 /**
  * Reusable GPS Map Camera watermark badge.
  * Matches the reference layout with Google map thumbnail, red pin,
@@ -96,7 +99,8 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 8,
     position: 'relative',
-    maxWidth: 380,
+    width: BADGE_WIDTH,
+    minHeight: BADGE_HEIGHT,
   },
   topRightTag: {
     position: 'absolute',
@@ -120,8 +124,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   mapContainer: {
-    width: 72,
-    height: 72,
+    width: 68,
+    height: 68,
     borderRadius: 6,
     overflow: 'hidden',
     position: 'relative',
@@ -139,12 +143,12 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    bottom: 12,
+    bottom: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
   pinEmoji: {
-    fontSize: 22,
+    fontSize: 20,
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
@@ -171,25 +175,25 @@ const styles = StyleSheet.create({
   },
   title: {
     color: '#ffffff',
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   subAddress: {
     color: '#f1f5f9',
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 9.5,
+    lineHeight: 12.5,
     marginTop: 2,
   },
   coords: {
     color: '#ffffff',
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '600',
     marginTop: 2,
   },
   dateTime: {
     color: '#cbd5e1',
-    fontSize: 9.5,
+    fontSize: 9,
     marginTop: 2,
   },
 });

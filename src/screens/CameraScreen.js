@@ -15,7 +15,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library/legacy';
 
 import OverlayCapture from '../components/OverlayCapture';
-import WatermarkBadge from '../components/WatermarkBadge';
+import WatermarkBadge, { BADGE_WIDTH, BADGE_HEIGHT } from '../components/WatermarkBadge';
 import { getLocationData, getStaticMapUrl } from '../utils/location';
 import { getFormattedDateTime } from '../utils/dateTime';
 import { cleanupTempFile } from '../utils/overlay';
@@ -219,6 +219,36 @@ export default function CameraScreen({ navigation }) {
     ? getStaticMapUrl(locationData.coords.latitude, locationData.coords.longitude, GOOGLE_STATIC_MAPS_API_KEY)
     : null;
 
+  // Exact bottom center positioning for the live watermark
+  let liveBadgePositionStyle = {
+    position: 'absolute',
+    left: (SCREEN_WIDTH - BADGE_WIDTH) / 2,
+    bottom: 145,
+    zIndex: 15,
+  };
+
+  if (rotationDegrees === 90) {
+    // Landscape Left: bottom center of landscape is right edge, vertically centered
+    const centerX = SCREEN_WIDTH - BADGE_HEIGHT / 2 - 20;
+    const centerY = SCREEN_HEIGHT / 2;
+    liveBadgePositionStyle = {
+      position: 'absolute',
+      left: centerX - BADGE_WIDTH / 2,
+      top: centerY - BADGE_HEIGHT / 2,
+      zIndex: 15,
+    };
+  } else if (rotationDegrees === 270) {
+    // Landscape Right: bottom center of landscape is left edge, vertically centered
+    const centerX = BADGE_HEIGHT / 2 + 20;
+    const centerY = SCREEN_HEIGHT / 2;
+    liveBadgePositionStyle = {
+      position: 'absolute',
+      left: centerX - BADGE_WIDTH / 2,
+      top: centerY - BADGE_HEIGHT / 2,
+      zIndex: 15,
+    };
+  }
+
   return (
     <View style={styles.container}>
       {/* Live Camera Viewfinder */}
@@ -333,24 +363,19 @@ export default function CameraScreen({ navigation }) {
       </View>
 
       {/* ================================================================= */}
-      {/* Live Rotating Watermark Badge */}
+      {/* Live Rotating Watermark Badge (Always Bottom Center) */}
       {/* ================================================================= */}
-      <View
-        style={[
-          styles.watermarkWrapper,
-          isLandscape && styles.watermarkWrapperLandscape,
-        ]}
+      <Animated.View
+        style={[liveBadgePositionStyle, rotationStyle]}
         pointerEvents="box-none"
       >
-        <Animated.View style={[styles.watermarkAnimContainer, rotationStyle]}>
-          <WatermarkBadge
-            address={locationData?.address}
-            coords={locationData?.coords}
-            dateTime={dateTime}
-            mapUri={staticMapUri}
-          />
-        </Animated.View>
-      </View>
+        <WatermarkBadge
+          address={locationData?.address}
+          coords={locationData?.coords}
+          dateTime={dateTime}
+          mapUri={staticMapUri}
+        />
+      </Animated.View>
 
       {/* ================================================================= */}
       {/* Zoom Selector (1x / 2x) */}

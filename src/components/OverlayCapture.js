@@ -8,13 +8,16 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import ViewShot from 'react-native-view-shot';
-import WatermarkBadge from './WatermarkBadge';
+import WatermarkBadge, { BADGE_WIDTH, BADGE_HEIGHT } from './WatermarkBadge';
 import { COLORS } from '../constants/theme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 /**
- * On-screen compositing component with dynamic orientation rotation.
+ * On-screen compositing component with precise Portrait vs Landscape placement.
+ * Ensures:
+ * - In Portrait: Watermark is in the bottom center of the image.
+ * - In Landscape: Watermark sits in the bottom center of the landscape view.
  */
 const OverlayCapture = forwardRef((props, ref) => {
   const viewShotRef = useRef(null);
@@ -43,7 +46,7 @@ const OverlayCapture = forwardRef((props, ref) => {
           rotationDegrees,
         });
 
-        // Safety timeout in case onLoad does not fire
+        // Safety timeout
         setTimeout(() => {
           triggerCapture();
         }, 1200);
@@ -56,7 +59,7 @@ const OverlayCapture = forwardRef((props, ref) => {
     capturedFlagRef.current = true;
 
     try {
-      // Small pause to guarantee native render paint
+      // Small pause to ensure native paint
       await new Promise((r) => setTimeout(r, 180));
 
       if (viewShotRef.current?.capture) {
@@ -86,21 +89,37 @@ const OverlayCapture = forwardRef((props, ref) => {
 
   const deg = data.rotationDegrees || 0;
 
-  // Calculate positioning style based on orientation
-  let badgePositionStyle = styles.badgePortrait;
-  let transformStyle = { transform: [{ rotate: '0deg' }] };
+  // Compute exact positioning so the watermark is strictly at the BOTTOM CENTER
+  // of either the portrait or landscape image.
+  let badgeStyle = {
+    position: 'absolute',
+    left: (SCREEN_WIDTH - BADGE_WIDTH) / 2,
+    bottom: 24,
+    transform: [{ rotate: '0deg' }],
+  };
 
   if (deg === 90) {
-    // Landscape Left (rotated 90deg counter-clockwise)
-    badgePositionStyle = styles.badgeLandscapeLeft;
-    transformStyle = { transform: [{ rotate: '90deg' }] };
+    // Landscape Left (top of phone tilted left):
+    // In portrait coordinates, the landscape bottom center is the right edge, vertically centered.
+    const centerX = SCREEN_WIDTH - BADGE_HEIGHT / 2 - 20;
+    const centerY = SCREEN_HEIGHT / 2;
+    badgeStyle = {
+      position: 'absolute',
+      left: centerX - BADGE_WIDTH / 2,
+      top: centerY - BADGE_HEIGHT / 2,
+      transform: [{ rotate: '90deg' }],
+    };
   } else if (deg === 270) {
-    // Landscape Right (rotated 90deg clockwise)
-    badgePositionStyle = styles.badgeLandscapeRight;
-    transformStyle = { transform: [{ rotate: '-90deg' }] };
-  } else if (deg === 180) {
-    badgePositionStyle = styles.badgeInverted;
-    transformStyle = { transform: [{ rotate: '180deg' }] };
+    // Landscape Right (top of phone tilted right):
+    // In portrait coordinates, the landscape bottom center is the left edge, vertically centered.
+    const centerX = BADGE_HEIGHT / 2 + 20;
+    const centerY = SCREEN_HEIGHT / 2;
+    badgeStyle = {
+      position: 'absolute',
+      left: centerX - BADGE_WIDTH / 2,
+      top: centerY - BADGE_HEIGHT / 2,
+      transform: [{ rotate: '-90deg' }],
+    };
   }
 
   return (
@@ -119,8 +138,8 @@ const OverlayCapture = forwardRef((props, ref) => {
           }}
         />
 
-        {/* Rotated Watermark Badge */}
-        <View style={[badgePositionStyle, transformStyle]}>
+        {/* Rotated Watermark Badge at Bottom Center */}
+        <View style={badgeStyle}>
           <WatermarkBadge
             address={data.address}
             coords={data.coords}
@@ -153,30 +172,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     position: 'relative',
     overflow: 'hidden',
-  },
-  badgePortrait: {
-    position: 'absolute',
-    bottom: 30,
-    left: 14,
-    right: 14,
-  },
-  badgeInverted: {
-    position: 'absolute',
-    top: 30,
-    left: 14,
-    right: 14,
-  },
-  badgeLandscapeLeft: {
-    position: 'absolute',
-    left: -60,
-    bottom: 220,
-    width: 360,
-  },
-  badgeLandscapeRight: {
-    position: 'absolute',
-    right: -60,
-    bottom: 220,
-    width: 360,
   },
   savingBadge: {
     position: 'absolute',
