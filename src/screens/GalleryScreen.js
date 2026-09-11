@@ -12,7 +12,9 @@ import {
   Dimensions,
   Alert,
   Share,
+  Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { getLocalCaptures, deleteLocalCapture } from '../utils/localGallery';
 import { COLORS } from '../constants/theme';
 
@@ -39,6 +41,18 @@ export default function GalleryScreen({ navigation }) {
   useEffect(() => {
     loadCaptures();
   }, [loadCaptures]);
+
+  // Web keyboard shortcut: Escape closes modal
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setSelectedPhoto(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -92,120 +106,142 @@ export default function GalleryScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.backText}>‹ Camera</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Local Gallery ({captures.length})</Text>
-        <View style={{ width: 60 }} />
-      </View>
-
-      {/* Grid */}
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={COLORS.accent} size="large" />
+      <View style={styles.appShell}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="chevron-back" size={18} color={COLORS.accent} />
+            <Text style={styles.backText}>Camera</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>Local Gallery ({captures.length})</Text>
+          <TouchableOpacity
+            style={styles.refreshIconBtn}
+            onPress={handleRefresh}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="reload" size={18} color="#94a3b8" />
+          </TouchableOpacity>
         </View>
-      ) : (
-        <FlatList
-          data={captures}
-          keyExtractor={(item) => item.id}
-          numColumns={3}
-          contentContainerStyle={styles.grid}
-          renderItem={renderItem}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              tintColor={COLORS.accent}
-              colors={[COLORS.accent]}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyIcon}>📷</Text>
-              <Text style={styles.emptyTitle}>No Photos Saved Yet</Text>
-              <Text style={styles.emptySubtitle}>
-                Take photos with GPS Map Camera to save watermarked images to your local device memory!
-              </Text>
-              <TouchableOpacity
-                style={styles.takePhotoBtn}
-                onPress={() => navigation.navigate('Camera')}
-              >
-                <Text style={styles.takePhotoBtnText}>Open Camera</Text>
-              </TouchableOpacity>
-            </View>
-          }
-        />
-      )}
 
-      {/* Fullscreen Photo Viewer Modal */}
-      {selectedPhoto && (
-        <Modal
-          visible={Boolean(selectedPhoto)}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setSelectedPhoto(null)}
-        >
-          <View style={styles.modalBackdrop}>
-            {/* Modal Header */}
-            <View style={styles.modalHeader}>
-              <TouchableOpacity
-                style={styles.modalCloseBtn}
-                onPress={() => setSelectedPhoto(null)}
-              >
-                <Text style={styles.modalCloseText}>✕ Close</Text>
-              </TouchableOpacity>
-
-              <View style={styles.modalActions}>
+        {/* Grid */}
+        {loading ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={COLORS.accent} size="large" />
+          </View>
+        ) : (
+          <FlatList
+            data={captures}
+            keyExtractor={(item) => item.id}
+            numColumns={3}
+            contentContainerStyle={styles.grid}
+            renderItem={renderItem}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor={COLORS.accent}
+                colors={[COLORS.accent]}
+              />
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Ionicons
+                  name="images-outline"
+                  size={54}
+                  color={COLORS.accent}
+                  style={styles.emptyIcon}
+                />
+                <Text style={styles.emptyTitle}>No Photos Saved Yet</Text>
+                <Text style={styles.emptySubtitle}>
+                  Take photos with GPS Map Camera to save watermarked images to your local device memory!
+                </Text>
                 <TouchableOpacity
-                  style={styles.actionBtn}
-                  onPress={() => handleShare(selectedPhoto)}
+                  style={styles.takePhotoBtn}
+                  onPress={() => navigation.navigate('Camera')}
                 >
-                  <Text style={styles.actionBtnText}>Share</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.deleteBtn]}
-                  onPress={() => handleDelete(selectedPhoto)}
-                >
-                  <Text style={[styles.actionBtnText, styles.deleteBtnText]}>Delete</Text>
+                  <Ionicons name="camera-outline" size={18} color="#000" style={{ marginRight: 6 }} />
+                  <Text style={styles.takePhotoBtnText}>Open Camera</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            }
+          />
+        )}
 
-            {/* Photo */}
-            <View style={styles.modalImageContainer}>
-              <Image
-                source={{ uri: selectedPhoto.uri }}
-                style={styles.fullscreenImage}
-                resizeMode="contain"
-              />
-            </View>
+        {/* Fullscreen Photo Viewer Modal */}
+        {selectedPhoto && (
+          <Modal
+            visible={Boolean(selectedPhoto)}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setSelectedPhoto(null)}
+          >
+            <View style={styles.modalBackdrop}>
+              {/* Modal Header */}
+              <View style={styles.modalHeader}>
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={() => setSelectedPhoto(null)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={20} color="#fff" />
+                  <Text style={styles.modalCloseText}>Close</Text>
+                </TouchableOpacity>
 
-            {/* Metadata Bottom Bar */}
-            <View style={styles.modalFooter}>
-              <Text style={styles.modalTitle}>
-                {selectedPhoto.address?.city || 'Location'}
-                {selectedPhoto.address?.region ? `, ${selectedPhoto.address.region}` : ''}
-              </Text>
-              {selectedPhoto.coords && (
-                <Text style={styles.modalCoords}>
-                  Lat {selectedPhoto.coords.latitude?.toFixed(6)}°, Long{' '}
-                  {selectedPhoto.coords.longitude?.toFixed(6)}°
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.actionBtn}
+                    onPress={() => handleShare(selectedPhoto)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="share-outline" size={16} color="#fff" style={{ marginRight: 4 }} />
+                    <Text style={styles.actionBtnText}>Share</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.deleteBtn]}
+                    onPress={() => handleDelete(selectedPhoto)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#ef4444" style={{ marginRight: 4 }} />
+                    <Text style={[styles.actionBtnText, styles.deleteBtnText]}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Photo */}
+              <View style={styles.modalImageContainer}>
+                <Image
+                  source={{ uri: selectedPhoto.uri }}
+                  style={styles.fullscreenImage}
+                  resizeMode="contain"
+                />
+              </View>
+
+              {/* Metadata Bottom Bar */}
+              <View style={styles.modalFooter}>
+                <Text style={styles.modalTitle}>
+                  {selectedPhoto.address?.city || 'Location'}
+                  {selectedPhoto.address?.region ? `, ${selectedPhoto.address.region}` : ''}
                 </Text>
-              )}
-              {selectedPhoto.address?.street ? (
-                <Text style={styles.modalStreet}>{selectedPhoto.address.street}</Text>
-              ) : null}
-              <Text style={styles.modalDate}>{selectedPhoto.dateTime}</Text>
+                {selectedPhoto.coords && (
+                  <Text style={styles.modalCoords}>
+                    Lat {selectedPhoto.coords.latitude?.toFixed(6)}°, Long{' '}
+                    {selectedPhoto.coords.longitude?.toFixed(6)}°
+                  </Text>
+                )}
+                {selectedPhoto.address?.street ? (
+                  <Text style={styles.modalStreet}>{selectedPhoto.address.street}</Text>
+                ) : null}
+                <Text style={styles.modalDate}>{selectedPhoto.dateTime}</Text>
+              </View>
             </View>
-          </View>
-        </Modal>
-      )}
+          </Modal>
+        )}
+      </View>
     </View>
   );
 }
@@ -213,6 +249,13 @@ export default function GalleryScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#0a0a0c',
+    alignItems: 'center',
+  },
+  appShell: {
+    flex: 1,
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 540 : undefined,
     backgroundColor: '#0a0a0c',
   },
   header: {
@@ -226,6 +269,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1a1a1f',
   },
   backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 6,
     paddingHorizontal: 10,
     backgroundColor: '#1f242e',
@@ -235,11 +280,15 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
     fontSize: 14,
     fontWeight: '700',
+    marginLeft: 4,
   },
   title: {
     color: '#fff',
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: 'bold',
+  },
+  refreshIconBtn: {
+    padding: 6,
   },
   center: {
     flex: 1,
@@ -258,18 +307,18 @@ const styles = StyleSheet.create({
   thumb: {
     width: '100%',
     height: '100%',
-    borderRadius: 4,
+    borderRadius: 6,
     backgroundColor: '#161922',
   },
   thumbBadge: {
     position: 'absolute',
-    bottom: 4,
-    left: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 3,
+    bottom: 5,
+    left: 5,
+    right: 5,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    borderRadius: 4,
   },
   thumbBadgeText: {
     color: '#fff',
@@ -282,7 +331,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   emptyIcon: {
-    fontSize: 50,
     marginBottom: 16,
   },
   emptyTitle: {
@@ -299,8 +347,10 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   takePhotoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: COLORS.accent,
-    paddingHorizontal: 24,
+    paddingHorizontal: 22,
     paddingVertical: 12,
     borderRadius: 24,
   },
@@ -325,7 +375,9 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   modalCloseBtn: {
-    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 7,
     paddingHorizontal: 12,
     backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 8,
@@ -333,25 +385,28 @@ const styles = StyleSheet.create({
   modalCloseText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 13,
+    marginLeft: 4,
   },
   modalActions: {
     flexDirection: 'row',
   },
   actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginLeft: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 8,
   },
   actionBtnText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 13,
   },
   deleteBtn: {
-    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    backgroundColor: 'rgba(239, 68, 68, 0.22)',
   },
   deleteBtnText: {
     color: '#ef4444',
@@ -362,16 +417,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   fullscreenImage: {
-    width: SCREEN_WIDTH,
+    width: Math.min(SCREEN_WIDTH, 600),
     height: SCREEN_HEIGHT * 0.65,
   },
   modalFooter: {
     paddingHorizontal: 20,
     paddingBottom: 40,
     paddingTop: 16,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
+    maxWidth: Platform.OS === 'web' ? 540 : undefined,
+    width: '100%',
+    alignSelf: 'center',
   },
   modalTitle: {
     color: '#fff',

@@ -10,9 +10,11 @@ import {
   Animated,
   PanResponder,
   Modal,
+  Platform,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library/legacy';
+import { Ionicons } from '@expo/vector-icons';
 
 import OverlayCapture from '../components/OverlayCapture';
 import WatermarkBadge, { BADGE_WIDTH, BADGE_HEIGHT } from '../components/WatermarkBadge';
@@ -104,18 +106,24 @@ export default function CameraScreen({ navigation }) {
   }, [fetchLocation]);
 
   // Flash Toggle
-  const toggleFlash = () => {
+  const toggleFlash = useCallback(() => {
     setFlash((prev) => {
-      if (prev === 'off') return 'auto';
-      if (prev === 'auto') return 'on';
-      return 'off';
+      const next = prev === 'off' ? 'auto' : prev === 'auto' ? 'on' : 'off';
+      setToastMessage(`Flash: ${next.toUpperCase()}`);
+      setTimeout(() => setToastMessage(null), 1200);
+      return next;
     });
-  };
+  }, []);
 
   // Camera Facing Toggle
-  const toggleFacing = () => {
-    setFacing((prev) => (prev === 'back' ? 'front' : 'back'));
-  };
+  const toggleFacing = useCallback(() => {
+    setFacing((prev) => {
+      const next = prev === 'back' ? 'front' : 'back';
+      setToastMessage(`Camera: ${next === 'back' ? 'Rear' : 'Front'}`);
+      setTimeout(() => setToastMessage(null), 1200);
+      return next;
+    });
+  }, []);
 
   // Zoom Handler
   const handleZoomChange = (label) => {
@@ -129,7 +137,6 @@ export default function CameraScreen({ navigation }) {
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onPanResponderMove: (evt, gestureState) => {
-        // Slide range: -80px to +80px maps to +2 to -2 EV
         const delta = -gestureState.dy / 40;
         const clamped = Math.max(-2, Math.min(2, Math.round(delta * 2) / 2));
         setExposure(clamped);
@@ -138,24 +145,21 @@ export default function CameraScreen({ navigation }) {
   ).current;
 
   // Capture & Watermark Handler
-  async function handleCapture() {
+  const handleCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
     setIsCapturing(true);
 
     try {
-      // 1. Take raw photo from camera sensor
       const photo = await cameraRef.current.takePictureAsync({
         quality: 1,
         skipProcessing: false,
       });
 
-      // 2. Prepare location + timestamp
       const coords = locationData?.coords || { latitude: 0, longitude: 0 };
       const address = locationData?.address || { city: 'Unknown' };
       const currentDateTime = getFormattedDateTime();
       const mapUri = getStaticMapUrl(coords.latitude, coords.longitude, GOOGLE_STATIC_MAPS_API_KEY);
 
-      // 3. Composite photo with rotated watermark via ViewShot
       let finalUri = photo.uri;
       if (overlayRef.current?.compositePhoto) {
         finalUri = await overlayRef.current.compositePhoto({
@@ -168,14 +172,12 @@ export default function CameraScreen({ navigation }) {
         });
       }
 
-      // 4. Save to phone's public Media Gallery
       try {
         await MediaLibrary.saveToLibraryAsync(finalUri);
       } catch (err) {
         console.warn('System gallery save notice:', err.message);
       }
 
-      // 5. Save to local app memory for in-app Gallery
       await saveLocalCapture({
         uri: finalUri,
         address,
@@ -183,7 +185,6 @@ export default function CameraScreen({ navigation }) {
         dateTime: currentDateTime,
       });
 
-      // 6. Clean up raw cache photo
       if (finalUri !== photo.uri) {
         await cleanupTempFile(photo.uri);
       }
@@ -197,7 +198,29 @@ export default function CameraScreen({ navigation }) {
     } finally {
       setIsCapturing(false);
     }
-  }
+  }, [isCapturing, locationData, rotationDegrees]);
+
+  // Web keyboard shortcuts for easy desktop access
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onKeyDown = (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        handleCapture();
+      } else if (e.key === 'f' || e.key === 'F') {
+        toggleFlash();
+      } else if (e.key === 'g' || e.key === 'G') {
+        setShowGrid((v) => !v);
+      } else if (e.key === 'c' || e.key === 'C') {
+        toggleFacing();
+      } else if (e.key === 'Escape') {
+        setShowLocationModal(false);
+        setShowSettingsModal(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleCapture, toggleFlash, toggleFacing]);
 
   if (!cameraPermission?.granted) {
     return (
@@ -228,7 +251,6 @@ export default function CameraScreen({ navigation }) {
   };
 
   if (rotationDegrees === 90) {
-    // Landscape Left: bottom center of landscape is right edge, vertically centered
     const centerX = SCREEN_WIDTH - BADGE_HEIGHT / 2 - 20;
     const centerY = SCREEN_HEIGHT / 2;
     liveBadgePositionStyle = {
@@ -238,7 +260,6 @@ export default function CameraScreen({ navigation }) {
       zIndex: 15,
     };
   } else if (rotationDegrees === 270) {
-    // Landscape Right: bottom center of landscape is left edge, vertically centered
     const centerX = BADGE_HEIGHT / 2 + 20;
     const centerY = SCREEN_HEIGHT / 2;
     liveBadgePositionStyle = {
@@ -251,366 +272,403 @@ export default function CameraScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Live Camera Viewfinder */}
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing={facing}
-        flash={flash}
-        zoom={zoom}
-      />
-
-      {/* Grid Lines Overlay */}
-      {showGrid && (
-        <View style={styles.gridOverlay} pointerEvents="none">
-          <View style={styles.gridCol} />
-          <View style={styles.gridCol} />
-          <View style={styles.gridRow} />
-          <View style={styles.gridRow} />
-        </View>
-      )}
-
-      {/* Center Focus Reticle */}
-      <View style={styles.focusContainer} pointerEvents="none">
-        <View style={styles.focusRing} />
-      </View>
-
-      {/* Off-screen/On-screen Compositing View */}
-      <OverlayCapture ref={overlayRef} />
-
-      {/* ================================================================= */}
-      {/* Top Controls Bar */}
-      {/* ================================================================= */}
-      <View style={styles.topBar}>
-        {/* 1. Grid Toggle */}
-        <TouchableOpacity
-          style={styles.topBarBtn}
-          onPress={() => setShowGrid(!showGrid)}
-        >
-          <Animated.Text style={[styles.topBarIcon, rotationStyle]}>
-            {showGrid ? '⌗' : '🌐'}
-          </Animated.Text>
-        </TouchableOpacity>
-
-        {/* 2. Flash Mode */}
-        <TouchableOpacity style={styles.topBarBtn} onPress={toggleFlash}>
-          <Animated.Text style={[styles.topBarIcon, rotationStyle]}>
-            {flash === 'on' ? '⚡' : flash === 'auto' ? '⚡A' : '⚡̸'}
-          </Animated.Text>
-        </TouchableOpacity>
-
-        {/* 3. Notes / Forms */}
-        <TouchableOpacity
-          style={styles.topBarBtn}
-          onPress={() => setShowLocationModal(true)}
-        >
-          <Animated.Text style={[styles.topBarIcon, rotationStyle]}>
-            📄⁺
-          </Animated.Text>
-        </TouchableOpacity>
-
-        {/* 4. Aspect Ratio */}
-        <TouchableOpacity
-          style={styles.topBarBtn}
-          onPress={() => {
-            setToastMessage('Aspect ratio: 9:16 Full');
-            setTimeout(() => setToastMessage(null), 1500);
-          }}
-        >
-          <Animated.Text style={[styles.topBarIcon, rotationStyle]}>
-            🖼️
-          </Animated.Text>
-        </TouchableOpacity>
-
-        {/* 5. Flip Camera */}
-        <TouchableOpacity style={styles.topBarBtn} onPress={toggleFacing}>
-          <Animated.Text style={[styles.topBarIcon, rotationStyle]}>
-            🔄
-          </Animated.Text>
-        </TouchableOpacity>
-
-        {/* 6. Settings */}
-        <TouchableOpacity
-          style={styles.topBarBtn}
-          onPress={() => setShowSettingsModal(true)}
-        >
-          <Animated.Text style={[styles.topBarIcon, rotationStyle]}>
-            ⚙️
-          </Animated.Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* ================================================================= */}
-      {/* Right-Side Exposure / Brightness Slider */}
-      {/* ================================================================= */}
-      <View style={styles.exposureContainer} {...panResponder.panHandlers}>
-        <View style={styles.exposureTrack}>
-          <View
-            style={[
-              styles.exposureFill,
-              {
-                height: `${Math.min(100, Math.max(10, 50 + exposure * 25))}%`,
-              },
-            ]}
-          />
-          <View style={styles.exposureSunThumb}>
-            <Text style={styles.sunIcon}>☀️</Text>
-          </View>
-        </View>
-        <Text style={styles.exposureValue}>
-          {exposure > 0 ? `+${exposure}` : `${exposure}`}
-        </Text>
-      </View>
-
-      {/* ================================================================= */}
-      {/* Live Rotating Watermark Badge (Always Bottom Center) */}
-      {/* ================================================================= */}
-      <Animated.View
-        style={[liveBadgePositionStyle, rotationStyle]}
-        pointerEvents="box-none"
-      >
-        <WatermarkBadge
-          address={locationData?.address}
-          coords={locationData?.coords}
-          dateTime={dateTime}
-          mapUri={staticMapUri}
+      <View style={styles.appShell}>
+        {/* Live Camera Viewfinder */}
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing={facing}
+          flash={flash}
+          zoom={zoom}
         />
-      </Animated.View>
 
-      {/* ================================================================= */}
-      {/* Zoom Selector (1x / 2x) */}
-      {/* ================================================================= */}
-      <View style={styles.zoomContainer}>
-        <View style={styles.zoomPill}>
-          <TouchableOpacity
-            style={[
-              styles.zoomBtn,
-              activeZoomLabel === '1x' && styles.zoomBtnActive,
-            ]}
-            onPress={() => handleZoomChange('1x')}
-          >
-            <Animated.Text
-              style={[
-                styles.zoomText,
-                activeZoomLabel === '1x' && styles.zoomTextActive,
-                rotationStyle,
-              ]}
-            >
-              1x
-            </Animated.Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.zoomBtn,
-              activeZoomLabel === '2x' && styles.zoomBtnActive,
-            ]}
-            onPress={() => handleZoomChange('2x')}
-          >
-            <Animated.Text
-              style={[
-                styles.zoomText,
-                activeZoomLabel === '2x' && styles.zoomTextActive,
-                rotationStyle,
-              ]}
-            >
-              2x
-            </Animated.Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* ================================================================= */}
-      {/* Camera Mode Bar (SHARE PHOTO, PHOTO, VIDEO, REPORTS) */}
-      {/* ================================================================= */}
-      <View style={styles.modeBar}>
-        {['SHARE PHOTO', 'PHOTO', 'VIDEO', 'REPORTS'].map((mode) => {
-          const isActive = activeMode === mode;
-          return (
-            <TouchableOpacity
-              key={mode}
-              style={[styles.modeBtn, isActive && styles.modeBtnActive]}
-              onPress={() => setActiveMode(mode)}
-            >
-              <Text style={[styles.modeText, isActive && styles.modeTextActive]}>
-                {mode}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* ================================================================= */}
-      {/* Bottom Controls Bar (Preview, Locations, Shutter, Storage, Template) */}
-      {/* ================================================================= */}
-      <View style={styles.bottomBar}>
-        {/* Preview */}
-        <TouchableOpacity
-          style={styles.bottomIconBtn}
-          onPress={() => navigation.navigate('Gallery')}
-        >
-          <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-            <Text style={styles.bottomIconEmoji}>🖼️</Text>
-          </Animated.View>
-          <Text style={styles.bottomLabel}>Preview</Text>
-        </TouchableOpacity>
-
-        {/* Locations */}
-        <TouchableOpacity
-          style={styles.bottomIconBtn}
-          onPress={() => setShowLocationModal(true)}
-        >
-          <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-            <Text style={styles.bottomIconEmoji}>📍</Text>
-          </Animated.View>
-          <Text style={styles.bottomLabel}>Locations</Text>
-        </TouchableOpacity>
-
-        {/* Shutter Button */}
-        <TouchableOpacity
-          style={styles.shutterOuter}
-          onPress={handleCapture}
-          disabled={isCapturing}
-          activeOpacity={0.8}
-        >
-          {isCapturing ? (
-            <ActivityIndicator color="#000" size="large" />
-          ) : (
-            <View style={styles.shutterInner} />
-          )}
-        </TouchableOpacity>
-
-        {/* Storage */}
-        <TouchableOpacity
-          style={styles.bottomIconBtn}
-          onPress={() => navigation.navigate('Gallery')}
-        >
-          <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-            <Text style={styles.bottomIconEmoji}>📁</Text>
-          </Animated.View>
-          <Text style={styles.bottomLabel}>Storage</Text>
-        </TouchableOpacity>
-
-        {/* Template */}
-        <TouchableOpacity
-          style={styles.bottomIconBtn}
-          onPress={() => {
-            setToastMessage('Watermark Template 1 Active');
-            setTimeout(() => setToastMessage(null), 1500);
-          }}
-        >
-          <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-            <Text style={styles.bottomIconEmoji}>⊞</Text>
-            {/* Red Badge '1' */}
-            <View style={styles.redBadge}>
-              <Text style={styles.redBadgeText}>1</Text>
-            </View>
-          </Animated.View>
-          <Text style={styles.bottomLabel}>Template</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <View style={styles.toast} pointerEvents="none">
-          <Text style={styles.toastText}>{toastMessage}</Text>
-        </View>
-      )}
-
-      {/* Location Details Modal */}
-      <Modal
-        visible={showLocationModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowLocationModal(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Location Info</Text>
-              <TouchableOpacity onPress={() => setShowLocationModal(false)}>
-                <Text style={styles.modalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.modalItemTitle}>Current City & Area:</Text>
-            <Text style={styles.modalItemValue}>
-              {locationData?.address?.city || 'Detecting...'},{' '}
-              {locationData?.address?.region} {locationData?.address?.country}{' '}
-              {locationData?.address?.flag}
-            </Text>
-
-            <Text style={styles.modalItemTitle}>Street / Plus Code:</Text>
-            <Text style={styles.modalItemValue}>
-              {locationData?.address?.street || 'GPS Pinpointed Address'}
-            </Text>
-
-            <Text style={styles.modalItemTitle}>GPS Coordinates:</Text>
-            <Text style={styles.modalItemValue}>
-              Lat: {locationData?.coords?.latitude?.toFixed(6) || '0.000000'}°{'\n'}
-              Long: {locationData?.coords?.longitude?.toFixed(6) || '0.000000'}°
-            </Text>
-
-            <TouchableOpacity
-              style={styles.modalActionBtn}
-              onPress={() => {
-                fetchLocation();
-                setShowLocationModal(false);
-                setToastMessage('Refreshed GPS Location');
-                setTimeout(() => setToastMessage(null), 1500);
-              }}
-            >
-              <Text style={styles.modalActionBtnText}>Refresh GPS</Text>
-            </TouchableOpacity>
+        {/* Grid Lines Overlay */}
+        {showGrid && (
+          <View style={styles.gridOverlay} pointerEvents="none">
+            <View style={styles.gridCol} />
+            <View style={styles.gridCol} />
+            <View style={styles.gridRow} />
+            <View style={styles.gridRow} />
           </View>
+        )}
+
+        {/* Center Focus Reticle */}
+        <View style={styles.focusContainer} pointerEvents="none">
+          <View style={styles.focusRing} />
         </View>
-      </Modal>
 
-      {/* Settings Modal */}
-      <Modal
-        visible={showSettingsModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowSettingsModal(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Camera Settings</Text>
-              <TouchableOpacity onPress={() => setShowSettingsModal(false)}>
-                <Text style={styles.modalClose}>✕</Text>
-              </TouchableOpacity>
+        {/* Off-screen/On-screen Compositing View */}
+        <OverlayCapture ref={overlayRef} />
+
+        {/* ================================================================= */}
+        {/* Top Controls Bar */}
+        {/* ================================================================= */}
+        <View style={styles.topBar}>
+          {/* 1. Grid Toggle */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => setShowGrid(!showGrid)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons
+                name={showGrid ? 'grid' : 'grid-outline'}
+                size={22}
+                color={showGrid ? COLORS.accent : '#fff'}
+              />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* 2. Flash Mode */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={toggleFlash}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons
+                name={
+                  flash === 'on'
+                    ? 'flash'
+                    : flash === 'auto'
+                    ? 'flash-outline'
+                    : 'flash-off'
+                }
+                size={22}
+                color={flash === 'on' ? COLORS.accent : '#fff'}
+              />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* 3. Notes / Forms */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => setShowLocationModal(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons name="document-text-outline" size={22} color="#fff" />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* 4. Aspect Ratio */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => {
+              setToastMessage('Aspect ratio: Full');
+              setTimeout(() => setToastMessage(null), 1500);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons name="expand-outline" size={22} color="#fff" />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* 5. Flip Camera */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={toggleFacing}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons name="camera-reverse-outline" size={23} color="#fff" />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* 6. Settings */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => setShowSettingsModal(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons name="settings-outline" size={22} color="#fff" />
+            </Animated.View>
+          </TouchableOpacity>
+        </View>
+
+        {/* ================================================================= */}
+        {/* Right-Side Exposure / Brightness Slider */}
+        {/* ================================================================= */}
+        <View style={styles.exposureContainer} {...panResponder.panHandlers}>
+          <View style={styles.exposureTrack}>
+            <View
+              style={[
+                styles.exposureFill,
+                {
+                  height: `${Math.min(100, Math.max(10, 50 + exposure * 25))}%`,
+                },
+              ]}
+            />
+            <View style={styles.exposureSunThumb}>
+              <Ionicons name="sunny" size={16} color={COLORS.accent} />
             </View>
+          </View>
+          <Text style={styles.exposureValue}>
+            {exposure > 0 ? `+${exposure}` : `${exposure}`}
+          </Text>
+        </View>
 
-            <View style={styles.settingRow}>
-              <Text style={styles.settingText}>Grid Lines</Text>
-              <TouchableOpacity
-                style={[styles.toggleBtn, showGrid && styles.toggleBtnActive]}
-                onPress={() => setShowGrid(!showGrid)}
+        {/* ================================================================= */}
+        {/* Live Rotating Watermark Badge (Always Bottom Center) */}
+        {/* ================================================================= */}
+        <Animated.View
+          style={[liveBadgePositionStyle, rotationStyle]}
+          pointerEvents="box-none"
+        >
+          <WatermarkBadge
+            address={locationData?.address}
+            coords={locationData?.coords}
+            dateTime={dateTime}
+            mapUri={staticMapUri}
+          />
+        </Animated.View>
+
+        {/* ================================================================= */}
+        {/* Zoom Selector (1x / 2x) */}
+        {/* ================================================================= */}
+        <View style={styles.zoomContainer}>
+          <View style={styles.zoomPill}>
+            <TouchableOpacity
+              style={[
+                styles.zoomBtn,
+                activeZoomLabel === '1x' && styles.zoomBtnActive,
+              ]}
+              onPress={() => handleZoomChange('1x')}
+            >
+              <Animated.Text
+                style={[
+                  styles.zoomText,
+                  activeZoomLabel === '1x' && styles.zoomTextActive,
+                  rotationStyle,
+                ]}
               >
-                <Text style={styles.toggleBtnText}>{showGrid ? 'ON' : 'OFF'}</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.settingRow}>
-              <Text style={styles.settingText}>Watermark Orientation</Text>
-              <Text style={styles.settingValue}>{orientation.toUpperCase()}</Text>
-            </View>
-
-            <View style={styles.settingRow}>
-              <Text style={styles.settingText}>Photos Saved</Text>
-              <Text style={styles.settingValue}>{savedCount}</Text>
-            </View>
+                1x
+              </Animated.Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.modalActionBtn, { marginTop: 20 }]}
-              onPress={() => setShowSettingsModal(false)}
+              style={[
+                styles.zoomBtn,
+                activeZoomLabel === '2x' && styles.zoomBtnActive,
+              ]}
+              onPress={() => handleZoomChange('2x')}
             >
-              <Text style={styles.modalActionBtnText}>Done</Text>
+              <Animated.Text
+                style={[
+                  styles.zoomText,
+                  activeZoomLabel === '2x' && styles.zoomTextActive,
+                  rotationStyle,
+                ]}
+              >
+                2x
+              </Animated.Text>
             </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+
+        {/* ================================================================= */}
+        {/* Camera Mode Bar (SHARE PHOTO, PHOTO, VIDEO, REPORTS) */}
+        {/* ================================================================= */}
+        <View style={styles.modeBar}>
+          {['SHARE PHOTO', 'PHOTO', 'VIDEO', 'REPORTS'].map((mode) => {
+            const isActive = activeMode === mode;
+            return (
+              <TouchableOpacity
+                key={mode}
+                style={[styles.modeBtn, isActive && styles.modeBtnActive]}
+                onPress={() => setActiveMode(mode)}
+              >
+                <Text style={[styles.modeText, isActive && styles.modeTextActive]}>
+                  {mode}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* ================================================================= */}
+        {/* Bottom Controls Bar (Preview, Locations, Shutter, Storage, Template) */}
+        {/* ================================================================= */}
+        <View style={styles.bottomBar}>
+          {/* Preview */}
+          <TouchableOpacity
+            style={styles.bottomIconBtn}
+            onPress={() => navigation.navigate('Gallery')}
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
+              <Ionicons name="images-outline" size={23} color="#fff" />
+            </Animated.View>
+            <Text style={styles.bottomLabel}>Preview</Text>
+          </TouchableOpacity>
+
+          {/* Locations */}
+          <TouchableOpacity
+            style={styles.bottomIconBtn}
+            onPress={() => setShowLocationModal(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
+              <Ionicons name="location-outline" size={23} color={COLORS.accent} />
+            </Animated.View>
+            <Text style={styles.bottomLabel}>Locations</Text>
+          </TouchableOpacity>
+
+          {/* Shutter Button */}
+          <TouchableOpacity
+            style={styles.shutterOuter}
+            onPress={handleCapture}
+            disabled={isCapturing}
+            activeOpacity={0.8}
+          >
+            {isCapturing ? (
+              <ActivityIndicator color="#000" size="large" />
+            ) : (
+              <View style={styles.shutterInner} />
+            )}
+          </TouchableOpacity>
+
+          {/* Storage */}
+          <TouchableOpacity
+            style={styles.bottomIconBtn}
+            onPress={() => navigation.navigate('Gallery')}
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
+              <Ionicons name="folder-outline" size={23} color="#fff" />
+            </Animated.View>
+            <Text style={styles.bottomLabel}>Storage</Text>
+          </TouchableOpacity>
+
+          {/* Template */}
+          <TouchableOpacity
+            style={styles.bottomIconBtn}
+            onPress={() => {
+              setToastMessage('Template 1: Modern Badge Active');
+              setTimeout(() => setToastMessage(null), 1500);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+          >
+            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
+              <Ionicons name="apps-outline" size={23} color="#fff" />
+              <View style={styles.redBadge}>
+                <Text style={styles.redBadgeText}>1</Text>
+              </View>
+            </Animated.View>
+            <Text style={styles.bottomLabel}>Template</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Toast Notification */}
+        {toastMessage && (
+          <View style={styles.toast} pointerEvents="none">
+            <Text style={styles.toastText}>{toastMessage}</Text>
+          </View>
+        )}
+
+        {/* Location Details Modal */}
+        <Modal
+          visible={showLocationModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowLocationModal(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Location Info</Text>
+                <TouchableOpacity
+                  onPress={() => setShowLocationModal(false)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={24} color="#94a3b8" />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.modalItemTitle}>Current City & Area:</Text>
+              <Text style={styles.modalItemValue}>
+                {locationData?.address?.city || 'Detecting...'},{' '}
+                {locationData?.address?.region} {locationData?.address?.country}{' '}
+                {locationData?.address?.flag}
+              </Text>
+
+              <Text style={styles.modalItemTitle}>Street / Plus Code:</Text>
+              <Text style={styles.modalItemValue}>
+                {locationData?.address?.street || 'GPS Pinpointed Address'}
+              </Text>
+
+              <Text style={styles.modalItemTitle}>GPS Coordinates:</Text>
+              <Text style={styles.modalItemValue}>
+                Lat: {locationData?.coords?.latitude?.toFixed(6) || '0.000000'}°{'\n'}
+                Long: {locationData?.coords?.longitude?.toFixed(6) || '0.000000'}°
+              </Text>
+
+              <TouchableOpacity
+                style={styles.modalActionBtn}
+                onPress={() => {
+                  fetchLocation();
+                  setShowLocationModal(false);
+                  setToastMessage('Refreshed GPS Location');
+                  setTimeout(() => setToastMessage(null), 1500);
+                }}
+              >
+                <Text style={styles.modalActionBtnText}>Refresh GPS</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Settings Modal */}
+        <Modal
+          visible={showSettingsModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowSettingsModal(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Camera Settings</Text>
+                <TouchableOpacity
+                  onPress={() => setShowSettingsModal(false)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={24} color="#94a3b8" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.settingRow}>
+                <Text style={styles.settingText}>Grid Lines</Text>
+                <TouchableOpacity
+                  style={[styles.toggleBtn, showGrid && styles.toggleBtnActive]}
+                  onPress={() => setShowGrid(!showGrid)}
+                >
+                  <Text style={styles.toggleBtnText}>{showGrid ? 'ON' : 'OFF'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.settingRow}>
+                <Text style={styles.settingText}>Watermark Orientation</Text>
+                <Text style={styles.settingValue}>{orientation.toUpperCase()}</Text>
+              </View>
+
+              <View style={styles.settingRow}>
+                <Text style={styles.settingText}>Photos Saved</Text>
+                <Text style={styles.settingValue}>{savedCount}</Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.modalActionBtn, { marginTop: 20 }]}
+                onPress={() => setShowSettingsModal(false)}
+              >
+                <Text style={styles.modalActionBtnText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </View>
     </View>
   );
 }
@@ -618,6 +676,16 @@ export default function CameraScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appShell: {
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 480 : undefined,
+    height: '100%',
+    position: 'relative',
+    overflow: 'hidden',
     backgroundColor: '#000',
   },
   center: {
@@ -686,7 +754,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     zIndex: 20,
   },
   topBarBtn: {
@@ -694,10 +762,6 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  topBarIcon: {
-    fontSize: 21,
-    color: '#fff',
   },
 
   // Exposure Slider
@@ -731,32 +795,11 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
   },
-  sunIcon: {
-    fontSize: 16,
-  },
   exposureValue: {
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
     marginTop: 6,
-  },
-
-  // Live Rotating Watermark Badge
-  watermarkWrapper: {
-    position: 'absolute',
-    bottom: 185,
-    left: 12,
-    right: 12,
-    zIndex: 15,
-  },
-  watermarkWrapperLandscape: {
-    bottom: 230,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  watermarkAnimContainer: {
-    alignSelf: 'flex-start',
   },
 
   // Zoom Selector (1x / 2x)
@@ -847,9 +890,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
-  bottomIconEmoji: {
-    fontSize: 23,
-  },
   bottomLabel: {
     color: '#ffffff',
     fontSize: 11,
@@ -933,11 +973,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-  },
-  modalClose: {
-    color: '#94a3b8',
-    fontSize: 20,
-    padding: 4,
   },
   modalItemTitle: {
     color: COLORS.accent,

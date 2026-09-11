@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 export const BADGE_WIDTH = 340;
 export const BADGE_HEIGHT = 88;
@@ -40,7 +41,7 @@ export default function WatermarkBadge({
     <View style={[styles.container, style]}>
       {/* Top right GPS Map Camera tag */}
       <View style={styles.topRightTag}>
-        <Text style={styles.cameraIcon}>📷</Text>
+        <Ionicons name="camera" size={10} color="#FFD400" style={{ marginRight: 3 }} />
         <Text style={styles.tagText}>GPS Map Camera</Text>
       </View>
 
@@ -59,7 +60,7 @@ export default function WatermarkBadge({
 
           {/* Red Location Pin in center */}
           <View style={styles.pinWrapper} pointerEvents="none">
-            <Text style={styles.pinEmoji}>📍</Text>
+            <Ionicons name="location" size={24} color="#ef4444" />
           </View>
 
           {/* Google branding watermark */}
