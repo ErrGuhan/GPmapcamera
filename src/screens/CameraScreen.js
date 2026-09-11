@@ -13,34 +13,23 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import OverlayCapture from '../components/OverlayCapture';
 import { getLocationData, getStaticMapUrl } from '../utils/location';
 import { getFormattedDateTime } from '../utils/dateTime';
-import { burnOverlayOntoPhoto, cleanupTempFile } from '../utils/overlay';
-import { uploadCapture, enqueuePendingUpload } from '../utils/upload';
-import { useAuth } from '../context/AuthContext';
+import { cleanupTempFile } from '../utils/overlay';
+import { saveLocalCapture } from '../utils/localGallery';
+import { COLORS } from '../constants/theme';
 
-// Replace with your own key from Google Cloud Console (Static Maps API).
+// Optional: Replace with your Google Static Maps API key if desired.
 const GOOGLE_STATIC_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY';
-
-// Upload status badge values
-const UPLOAD_STATUS = {
-  IDLE: null,
-  UPLOADING: 'uploading',
-  SUCCESS: 'success',
-  PENDING: 'pending',
-  ERROR: 'error',
-};
 
 export default function CameraScreen({ navigation }) {
   const cameraRef = useRef(null);
   const overlayRef = useRef(null);
-
-  const { user } = useAuth();
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [mediaPermission, setMediaPermission] = useState({ granted: true });
 
   const [isCapturing, setIsCapturing] = useState(false);
   const [locationPreview, setLocationPreview] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState(UPLOAD_STATUS.IDLE);
+  const [toastMessage, setToastMessage] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -53,15 +42,13 @@ export default function CameraScreen({ navigation }) {
         const perm = await MediaLibrary.getPermissionsAsync(true);
         setMediaPermission(perm);
       } catch (e) {
-        // In Expo Go on Android, MediaLibrary permission requests are restricted
-        // by Google Play policy. Default to granted so UI doesn't block.
+        // In Expo Go on Android, default to true so viewfinder is not blocked
         setMediaPermission({ granted: true });
       }
     })();
   }, []);
 
-  // Fetch a live location preview so the on-screen overlay looks accurate
-  // before the user even taps the shutter.
+  // Live location updates for the viewfinder banner
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -69,17 +56,19 @@ export default function CameraScreen({ navigation }) {
         const data = await getLocationData();
         if (mounted) setLocationPreview(data);
       } catch (e) {
-        console.warn(e);
+        console.warn('Initial location fetch failed:', e);
       }
     })();
+
     const interval = setInterval(async () => {
       try {
         const data = await getLocationData();
         if (mounted) setLocationPreview(data);
       } catch (e) {
-        // silent — keep last known location
+        // keep last known position
       }
     }, 15000);
+
     return () => {
       mounted = false;
       clearInterval(interval);
@@ -91,81 +80,63 @@ export default function CameraScreen({ navigation }) {
     setIsCapturing(true);
 
     try {
-      // 1. Capture the raw photo.
+      // 1. Capture raw photo from camera sensor
       const photo = await cameraRef.current.takePictureAsync({
         quality: 1,
         skipProcessing: false,
       });
 
-      // 2. Get fresh location + address at the moment of capture.
-      const { coords, address } = await getLocationData();
+      // 2. Refresh location and timestamp at capture moment
+      let coords = locationPreview?.coords;
+      let address = locationPreview?.address;
+      try {
+        const fresh = await getLocationData();
+        coords = fresh.coords;
+        address = fresh.address;
+      } catch (locErr) {
+        // Fall back to preview location
+      }
+
       const dateTime = getFormattedDateTime();
-      const mapUri = getStaticMapUrl(
-        coords.latitude,
-        coords.longitude,
-        GOOGLE_STATIC_MAPS_API_KEY
-      );
+      const mapUri = coords
+        ? getStaticMapUrl(coords.latitude, coords.longitude, GOOGLE_STATIC_MAPS_API_KEY)
+        : null;
 
-      // 3. Update the off-screen overlay with final data, then snapshot it.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      const overlayUri = await overlayRef.current.capture(photo.uri);
+      // 3. Composite photo with location & timestamp watermark banner
+      let finalUri = photo.uri;
+      if (overlayRef.current?.compositePhoto) {
+        finalUri = await overlayRef.current.compositePhoto({
+          photoUri: photo.uri,
+          coords,
+          address,
+          dateTime,
+          mapUri,
+        });
+      }
 
-      // 4. Burn overlay onto the photo.
-      const finalUri = await burnOverlayOntoPhoto(
-        photo.uri,
-        overlayUri,
-        photo.width,
-        photo.height
-      );
-
-      // 5. Save to device gallery.
+      // 4. Save to phone's public Media Gallery (DCIM / Photos)
       try {
         await MediaLibrary.saveToLibraryAsync(finalUri);
       } catch (err) {
-        console.warn('Could not save to local device gallery (Expo Go limitation):', err.message);
+        console.warn('Could not save to system gallery:', err.message);
       }
 
-      // 6. Clean up temp files.
+      // 5. Save to app persistent local memory for in-app Gallery
+      await saveLocalCapture({
+        uri: finalUri,
+        address,
+        coords,
+        dateTime,
+      });
+
+      // 6. Clean up temporary un-watermarked camera cache photo
       if (finalUri !== photo.uri) {
         await cleanupTempFile(photo.uri);
       }
-      if (overlayUri && overlayUri !== finalUri && overlayUri !== photo.uri) {
-        await cleanupTempFile(overlayUri);
-      }
 
-      Alert.alert('Saved', 'Photo saved with location watermark.');
-
-      // -----------------------------------------------------------------------
-      // 7. Upload to Supabase (non-blocking — does not delay the next capture).
-      // -----------------------------------------------------------------------
-      if (user?.id) {
-        setUploadStatus(UPLOAD_STATUS.UPLOADING);
-        const capturedAt = new Date().toISOString();
-        const metadata = {
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          address,
-          capturedAt,
-        };
-
-        try {
-          await uploadCapture(finalUri, user.id, metadata);
-          setUploadStatus(UPLOAD_STATUS.SUCCESS);
-          // Auto-clear the success badge after 3 seconds
-          setTimeout(() => setUploadStatus(UPLOAD_STATUS.IDLE), 3000);
-        } catch (uploadError) {
-          console.warn('[CameraScreen] Upload failed, queuing:', uploadError.message);
-          // Persist to the offline queue so useUploadQueue can retry later
-          await enqueuePendingUpload({
-            id: `${user.id}_${Date.now()}`,
-            localUri: finalUri,
-            userId: user.id,
-            metadata,
-          });
-          setUploadStatus(UPLOAD_STATUS.PENDING);
-          // Keep the "pending" badge visible until next successful retry
-        }
-      }
+      // 7. Show success feedback
+      setToastMessage('✓ Photo saved to gallery with watermark!');
+      setTimeout(() => setToastMessage(null), 3000);
     } catch (error) {
       console.error(error);
       Alert.alert('Error', error.message || 'Failed to capture photo.');
@@ -188,7 +159,6 @@ export default function CameraScreen({ navigation }) {
           style={styles.permissionButton}
           onPress={() => {
             requestCameraPermission();
-            requestMediaPermission();
           }}
         >
           <Text style={styles.permissionButtonText}>Grant Permissions</Text>
@@ -201,26 +171,18 @@ export default function CameraScreen({ navigation }) {
     <View style={styles.container}>
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
 
-      {/* Off-screen overlay used for the actual burned watermark */}
-      {locationPreview && (
-        <OverlayCapture
-          ref={overlayRef}
-          address={locationPreview.address}
-          coords={locationPreview.coords}
-          dateTime={getFormattedDateTime()}
-          mapUri={getStaticMapUrl(
-            locationPreview.coords.latitude,
-            locationPreview.coords.longitude,
-            GOOGLE_STATIC_MAPS_API_KEY
-          )}
-        />
-      )}
+      {/* On-screen ViewShot compositing layer (renders during capture) */}
+      <OverlayCapture ref={overlayRef} />
 
-      {/* On-screen live preview of what the overlay will look like */}
-      {locationPreview && (
+      {/* On-screen live preview of current GPS & address */}
+      {locationPreview && !isCapturing && (
         <View style={styles.livePreviewOverlay} pointerEvents="none">
-          <Text style={styles.previewTitle}>
-            {locationPreview.address.city}, {locationPreview.address.region}
+          <View style={styles.livePreviewHeader}>
+            <Text style={styles.previewTag}>GPS ACTIVE</Text>
+          </View>
+          <Text style={styles.previewTitle} numberOfLines={1}>
+            {locationPreview.address.city || 'Location'}
+            {locationPreview.address.region ? `, ${locationPreview.address.region}` : ''}
           </Text>
           <Text style={styles.previewBody}>
             Lat {locationPreview.coords.latitude.toFixed(6)}°, Long{' '}
@@ -230,9 +192,14 @@ export default function CameraScreen({ navigation }) {
         </View>
       )}
 
-      {/* Non-blocking upload status badge */}
-      {uploadStatus && <UploadStatusBadge status={uploadStatus} />}
+      {/* Toast Notification */}
+      {toastMessage && (
+        <View style={styles.toast}>
+          <Text style={styles.toastText}>{toastMessage}</Text>
+        </View>
+      )}
 
+      {/* Controls Bar */}
       <View style={styles.controls}>
         <TouchableOpacity
           style={styles.galleryButton}
@@ -259,26 +226,6 @@ export default function CameraScreen({ navigation }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Upload status badge (small, non-intrusive)
-// ---------------------------------------------------------------------------
-function UploadStatusBadge({ status }) {
-  const config = {
-    [UPLOAD_STATUS.UPLOADING]: { label: 'Uploading…', color: '#FFD400', textColor: '#000' },
-    [UPLOAD_STATUS.SUCCESS]:   { label: 'Saved to cloud ✓', color: '#22c55e', textColor: '#fff' },
-    [UPLOAD_STATUS.PENDING]:   { label: 'Pending upload ☁', color: '#3b82f6', textColor: '#fff' },
-    [UPLOAD_STATUS.ERROR]:     { label: 'Upload failed', color: '#ef4444', textColor: '#fff' },
-  };
-  const cfg = config[status];
-  if (!cfg) return null;
-
-  return (
-    <View style={[styles.uploadBadge, { backgroundColor: cfg.color }]}>
-      <Text style={[styles.uploadBadgeText, { color: cfg.textColor }]}>{cfg.label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   center: {
@@ -295,33 +242,50 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   permissionButton: {
-    backgroundColor: '#FFD400',
+    backgroundColor: COLORS.accent,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
   },
-  permissionButtonText: { fontWeight: 'bold' },
+  permissionButtonText: { fontWeight: 'bold', color: '#000' },
   livePreviewOverlay: {
     position: 'absolute',
     bottom: 140,
     left: 16,
     right: 16,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.accent,
   },
-  previewTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  previewBody: { color: '#fff', fontSize: 13, marginTop: 2 },
-  // Upload badge: sits above the live preview, non-blocking
-  uploadBadge: {
+  livePreviewHeader: {
+    marginBottom: 2,
+  },
+  previewTag: {
+    color: COLORS.accent,
+    fontSize: 10,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  previewTitle: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
+  previewBody: { color: '#e2e8f0', fontSize: 12, marginTop: 2 },
+  toast: {
     position: 'absolute',
-    bottom: 200,
+    top: 60,
     alignSelf: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    backgroundColor: 'rgba(22, 101, 52, 0.9)',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#4ade80',
   },
-  uploadBadgeText: { fontSize: 13, fontWeight: '600' },
+  toastText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
   controls: {
     position: 'absolute',
     bottom: 30,
@@ -335,10 +299,12 @@ const styles = StyleSheet.create({
   galleryButton: {
     width: 70,
     height: 44,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  galleryButtonText: { color: '#fff' },
+  galleryButtonText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   shutterButton: {
     width: 80,
     height: 80,
