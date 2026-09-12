@@ -96,8 +96,9 @@ In the Supabase Dashboard → **SQL Editor**, paste and run the full contents of
 
 This creates:
 - The `captures` table with all metadata columns
-- Row Level Security policies (users can only read/write their own rows)
-- Storage policies for the `captures` bucket
+- The `@svcet.ac.in` email restriction trigger on `auth.users`
+- Domain-checked Row Level Security policies on `captures`
+- Domain-checked Storage policies for the `captures` bucket
 
 ### 5. Create the Storage bucket
 
@@ -110,6 +111,42 @@ In the Supabase Dashboard → **Storage**:
 
 The Storage policies are included in `schema.sql` and should apply automatically
 once the bucket exists with that exact name.
+
+---
+
+## College Domain Restriction (@svcet.ac.in)
+
+OurGpsCam is an institutional application strictly restricted to Sri Venkateswara College of Engineering and Technology students and staff. Only accounts with an email address ending in `@svcet.ac.in` can create an account, log in, or access cloud storage.
+
+This restriction is enforced across **three distinct defense-in-depth tiers**:
+
+1. **Client-Side Validation (`src/screens/AuthScreen.js`)**:
+   - Both Sign In and Sign Up validate that the entered email strictly ends in `@svcet.ac.in` using `email.trim().toLowerCase().endsWith('@' + ALLOWED_EMAIL_DOMAIN.toLowerCase())`.
+   - Rejects non-college emails immediately with a friendly inline message without making a network request or leaking account existence.
+   - Re-maps any database-level trigger errors to friendly copy.
+
+2. **Server-Side Database Trigger (`supabase/schema.sql`)**:
+   - A PostgreSQL `BEFORE INSERT` trigger (`enforce_allowed_email_domain_trigger`) on the `auth.users` table executes `public.enforce_allowed_email_domain()`.
+   - If anyone bypasses the client UI and calls the Supabase Auth API directly via curl or SDK, the database rejects the insert with exception code `P0001`.
+
+3. **Row Level Security (RLS) Backstop (`supabase/schema.sql`)**:
+   - All 3 table policies on `public.captures` (SELECT, INSERT, DELETE) require `and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'` alongside `auth.uid() = user_id`.
+   - All 3 Storage policies on `storage.objects` for the `captures` bucket require `and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'` alongside folder ownership.
+   - Even if an unauthorized user account somehow existed in the database, it cannot read, write, or delete any photos or metadata.
+
+### How to Change or Extend the Allowed Domain
+If the college adds new department domains or changes the domain name:
+1. Update `ALLOWED_EMAIL_DOMAIN` in `src/screens/AuthScreen.js`.
+2. Update the SQL trigger check `lower(new.email) not like '%@svcet.ac.in'` in `supabase/schema.sql`.
+3. Update the RLS policies `(auth.jwt() ->> 'email') ilike '%@svcet.ac.in'` in `supabase/schema.sql`.
+4. Re-run the migration section of `supabase/schema.sql` in the Supabase SQL Editor.
+
+### Email Confirmation Recommendation
+In your **Supabase Dashboard → Authentication → Providers → Email**, ensure that **"Confirm email"** is turned **ON**.
+- Combined with the domain restriction, this ensures that only users who actually have access to the specified `@svcet.ac.in` inbox can verify and activate their account.
+
+---
+
 
 ### 6. Get a Google Static Maps API key (optional)
 

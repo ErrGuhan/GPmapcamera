@@ -13,9 +13,17 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/theme';
 
+// ---------------------------------------------------------------------------
+// College Domain Restriction
+// ---------------------------------------------------------------------------
+const ALLOWED_EMAIL_DOMAIN = 'svcet.ac.in';
+
 /**
  * AuthScreen — handles both Sign In and Sign Up in a single screen with a
  * toggle. Uses Supabase email/password auth via AuthContext.
+ *
+ * Domain-restricted: Only accounts with an email ending in @svcet.ac.in
+ * are permitted to sign up or sign in.
  *
  * Navigation: Once the user signs in/up, AuthContext updates `session`,
  * which causes App.js to swap to the Camera stack automatically — no
@@ -46,11 +54,21 @@ export default function AuthScreen() {
     setError('');
     setSuccessMsg('');
 
+    const cleanEmail = email.trim();
+
     // Basic client-side validation
-    if (!email.trim()) {
+    if (!cleanEmail) {
       setError('Please enter your email address.');
       return;
     }
+
+    // Strict domain check for both sign-up and sign-in
+    const expectedDomainSuffix = `@${ALLOWED_EMAIL_DOMAIN.toLowerCase()}`;
+    if (!cleanEmail.toLowerCase().endsWith(expectedDomainSuffix)) {
+      setError(`Only @${ALLOWED_EMAIL_DOMAIN} college email addresses can access this app.`);
+      return;
+    }
+
     if (!password) {
       setError('Please enter a password.');
       return;
@@ -67,24 +85,35 @@ export default function AuthScreen() {
     setLoading(true);
     try {
       if (isSignUp) {
-        await signUp(email.trim(), password);
+        await signUp(cleanEmail, password);
         // Supabase may require email confirmation depending on project settings.
         // Show a message instead of assuming immediate sign-in.
         setSuccessMsg(
-          'Account created! Check your email to confirm your address, then sign in.'
+          'Account created! Check your college email to confirm your address, then sign in.'
         );
         setMode('signin');
         setPassword('');
       } else {
-        await signIn(email.trim(), password);
+        await signIn(cleanEmail, password);
         // On success, App.js detects the new session and navigates automatically.
       }
     } catch (e) {
-      setError(e.message || 'Something went wrong. Please try again.');
+      const msg = e?.message || '';
+      // Remap raw Postgres trigger / database errors to user-friendly copy
+      if (
+        msg.includes('svcet.ac.in') ||
+        msg.includes('P0001') ||
+        msg.toLowerCase().includes('domain')
+      ) {
+        setError(`Only @${ALLOWED_EMAIL_DOMAIN} college email addresses can access this app.`);
+      } else {
+        setError(msg || 'Something went wrong. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   }
+
 
   return (
     <KeyboardAvoidingView
@@ -138,7 +167,7 @@ export default function AuthScreen() {
             </View>
           ) : null}
 
-          <Text style={styles.label}>Email</Text>
+          <Text style={styles.label}>College Email</Text>
           <TextInput
             style={styles.input}
             value={email}
@@ -146,11 +175,15 @@ export default function AuthScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="email-address"
-            placeholder="you@example.com"
+            placeholder={`yourname@${ALLOWED_EMAIL_DOMAIN}`}
             placeholderTextColor="#555"
             returnKeyType="next"
             editable={!loading}
           />
+          <Text style={styles.domainHint}>
+            Must be an official @{ALLOWED_EMAIL_DOMAIN} address
+          </Text>
+
 
           <Text style={styles.label}>Password</Text>
           <TextInput
@@ -275,6 +308,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     borderWidth: 1,
     borderColor: '#222',
+  },
+  domainHint: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 6,
+    marginLeft: 4,
   },
 
   // Feedback

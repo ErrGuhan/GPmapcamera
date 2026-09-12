@@ -98,3 +98,98 @@ create policy "Users can delete from their own folder"
     bucket_id = 'captures'
     and (storage.foldername(name))[1] = auth.uid()::text
   );
+
+-- =============================================================================
+-- Migration Addendum: Domain-Restricted Access (@svcet.ac.in)
+--
+-- Safe to re-run on existing projects:
+-- 1. Rejects any sign-up attempt outside @svcet.ac.in at the database level.
+-- 2. Enforces @svcet.ac.in email check on ALL table operations (captures).
+-- 3. Enforces @svcet.ac.in email check on ALL storage operations (captures bucket).
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Restrict sign-ups to @svcet.ac.in email addresses only
+-- ---------------------------------------------------------------------------
+create or replace function public.enforce_allowed_email_domain()
+returns trigger as $$
+begin
+  if new.email is null or lower(new.email) not like '%@svcet.ac.in' then
+    raise exception 'Only @svcet.ac.in email addresses are allowed to sign up.'
+      using errcode = 'P0001';
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists enforce_allowed_email_domain_trigger on auth.users;
+create trigger enforce_allowed_email_domain_trigger
+  before insert on auth.users
+  for each row execute function public.enforce_allowed_email_domain();
+
+-- ---------------------------------------------------------------------------
+-- 2. RLS Backstop: captures table policies with @svcet.ac.in domain check
+-- ---------------------------------------------------------------------------
+drop policy if exists "Users can view their own captures" on public.captures;
+create policy "Users can view their own captures"
+  on public.captures
+  for select
+  using (
+    auth.uid() = user_id
+    and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'
+  );
+
+drop policy if exists "Users can insert their own captures" on public.captures;
+create policy "Users can insert their own captures"
+  on public.captures
+  for insert
+  with check (
+    auth.uid() = user_id
+    and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'
+  );
+
+drop policy if exists "Users can delete their own captures" on public.captures;
+create policy "Users can delete their own captures"
+  on public.captures
+  for delete
+  using (
+    auth.uid() = user_id
+    and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'
+  );
+
+-- ---------------------------------------------------------------------------
+-- 3. RLS Backstop: storage.objects policies with @svcet.ac.in domain check
+-- ---------------------------------------------------------------------------
+drop policy if exists "Users can upload to their own folder" on storage.objects;
+create policy "Users can upload to their own folder"
+  on storage.objects
+  for insert
+  to authenticated
+  with check (
+    bucket_id = 'captures'
+    and (storage.foldername(name))[1] = auth.uid()::text
+    and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'
+  );
+
+drop policy if exists "Users can read their own folder" on storage.objects;
+create policy "Users can read their own folder"
+  on storage.objects
+  for select
+  to authenticated
+  using (
+    bucket_id = 'captures'
+    and (storage.foldername(name))[1] = auth.uid()::text
+    and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'
+  );
+
+drop policy if exists "Users can delete from their own folder" on storage.objects;
+create policy "Users can delete from their own folder"
+  on storage.objects
+  for delete
+  to authenticated
+  using (
+    bucket_id = 'captures'
+    and (storage.foldername(name))[1] = auth.uid()::text
+    and (auth.jwt() ->> 'email') ilike '%@svcet.ac.in'
+  );
+
