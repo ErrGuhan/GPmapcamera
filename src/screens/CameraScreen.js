@@ -377,7 +377,7 @@ export default function CameraScreen({ navigation }) {
         <OverlayCapture ref={overlayRef} />
 
         {/* ================================================================= */}
-        {/* Top Controls Bar (Streamlined to 4 Essential Controls) */}
+        {/* Top Controls Bar (Flash, Flip, Location, Grid, Settings) */}
         {/* ================================================================= */}
         <View style={styles.topBar}>
           {/* 1. Flash Mode */}
@@ -412,7 +412,22 @@ export default function CameraScreen({ navigation }) {
             </Animated.View>
           </TouchableOpacity>
 
-          {/* 3. Grid Toggle */}
+          {/* 3. Location Info */}
+          <TouchableOpacity
+            style={styles.topBarBtn}
+            onPress={() => setShowLocationModal(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Animated.View style={rotationStyle}>
+              <Ionicons
+                name={locationData?.coords ? 'location' : 'location-outline'}
+                size={23}
+                color={locationData?.coords ? COLORS.accent : '#fff'}
+              />
+            </Animated.View>
+          </TouchableOpacity>
+
+          {/* 4. Grid Toggle */}
           <TouchableOpacity
             style={styles.topBarBtn}
             onPress={() => setShowGrid(!showGrid)}
@@ -427,7 +442,7 @@ export default function CameraScreen({ navigation }) {
             </Animated.View>
           </TouchableOpacity>
 
-          {/* 4. Settings */}
+          {/* 5. Settings */}
           <TouchableOpacity
             style={styles.topBarBtn}
             onPress={() => setShowSettingsModal(true)}
@@ -533,34 +548,24 @@ export default function CameraScreen({ navigation }) {
         </View>
 
         {/* ================================================================= */}
-        {/* Bottom Controls Bar (Preview, Locations, Shutter, Storage) */}
+        {/* Bottom Navigation & Shutter Controls (Preview, Centered Shutter, Storage) */}
         {/* ================================================================= */}
         <View style={styles.bottomBar}>
-          {/* Preview */}
-          <TouchableOpacity
-            style={styles.bottomIconBtn}
-            onPress={() => navigation.navigate('Gallery')}
-            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-          >
-            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-              <Ionicons name="images-outline" size={24} color="#fff" />
-            </Animated.View>
-            <Text style={styles.bottomLabel}>Preview</Text>
-          </TouchableOpacity>
+          {/* Left Column: Preview */}
+          <View style={styles.bottomSideCol}>
+            <TouchableOpacity
+              style={styles.bottomIconBtn}
+              onPress={() => navigation.navigate('Gallery')}
+              hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+            >
+              <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
+                <Ionicons name="images-outline" size={24} color="#fff" />
+              </Animated.View>
+              <Text style={styles.bottomLabel}>Preview</Text>
+            </TouchableOpacity>
+          </View>
 
-          {/* Locations */}
-          <TouchableOpacity
-            style={styles.bottomIconBtn}
-            onPress={() => setShowLocationModal(true)}
-            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-          >
-            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-              <Ionicons name="location-outline" size={24} color={COLORS.accent} />
-            </Animated.View>
-            <Text style={styles.bottomLabel}>Locations</Text>
-          </TouchableOpacity>
-
-          {/* Shutter Button */}
+          {/* Center Column: Shutter Button */}
           <TouchableOpacity
             style={styles.shutterOuter}
             onPress={handleCapture}
@@ -574,17 +579,19 @@ export default function CameraScreen({ navigation }) {
             )}
           </TouchableOpacity>
 
-          {/* Storage */}
-          <TouchableOpacity
-            style={styles.bottomIconBtn}
-            onPress={() => navigation.navigate('Gallery')}
-            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-          >
-            <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
-              <Ionicons name="folder-outline" size={24} color="#fff" />
-            </Animated.View>
-            <Text style={styles.bottomLabel}>Storage</Text>
-          </TouchableOpacity>
+          {/* Right Column: Storage */}
+          <View style={styles.bottomSideCol}>
+            <TouchableOpacity
+              style={styles.bottomIconBtn}
+              onPress={() => navigation.navigate('Gallery')}
+              hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+            >
+              <Animated.View style={[styles.bottomIconCircle, rotationStyle]}>
+                <Ionicons name="folder-outline" size={24} color="#fff" />
+              </Animated.View>
+              <Text style={styles.bottomLabel}>Storage</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Toast Notification */}
@@ -872,10 +879,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     flexDirection: 'row',
-    justifyContent: 'space-evenly',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 24,
     zIndex: 20,
+  },
+  bottomSideCol: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   bottomIconBtn: {
     alignItems: 'center',
