@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Animated } from 'react-native';
+import { Animated, Platform } from 'react-native';
 import { Accelerometer } from 'expo-sensors';
 
 /**
@@ -81,7 +81,11 @@ export function useDeviceOrientation() {
 
             Animated.spring(animatedRotation, {
               toValue: angle,
-              useNativeDriver: true,
+              // useNativeDriver: true causes a GPU compositor conflict on web:
+              // the promoted compositing layer stacked over the CameraView <video>
+              // element causes Chrome/WebView to blank the video feed after ~5-8s.
+              // On native (iOS/Android) native driver is still used for 60fps perf.
+              useNativeDriver: Platform.OS !== 'web',
               friction: 8,
               tension: 45,
             }).start();
