@@ -24,6 +24,7 @@ import { getFormattedDateTime } from '../utils/dateTime';
 import { cleanupTempFile } from '../utils/overlay';
 import { saveLocalCapture, getLocalCaptures } from '../utils/localGallery';
 import { useDeviceOrientation } from '../hooks/useDeviceOrientation';
+import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/theme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -33,8 +34,17 @@ export default function CameraScreen({ navigation }) {
   const cameraRef = useRef(null);
   const overlayRef = useRef(null);
 
-  // Device orientation sensor
-  const { orientation, rotationDegrees, rotationStyle, isLandscape } = useDeviceOrientation();
+  // Authentication session & actions
+  const { user, signOut } = useAuth();
+
+  // Device orientation sensor with smooth animated value
+  const {
+    orientation,
+    rotationDegrees,
+    animatedRotation,
+    rotationStyle,
+    isLandscape,
+  } = useDeviceOrientation();
 
   // Permissions
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -389,33 +399,35 @@ export default function CameraScreen({ navigation }) {
     ? getStaticMapUrl(locationData.coords.latitude, locationData.coords.longitude, GOOGLE_STATIC_MAPS_API_KEY)
     : null;
 
-  // Exact bottom center positioning for the live watermark
-  let liveBadgePositionStyle = {
-    position: 'absolute',
-    left: (SCREEN_WIDTH - BADGE_WIDTH) / 2,
-    bottom: 148,
-    zIndex: 15,
-  };
+  // Lockstep translation and rotation interpolation for the live watermark badge.
+  // Both position (translateX, translateY) and angle (rotate) are driven by the exact
+  // same animatedRotation Animated.Value, eliminating the diagonal skew and shutter overlap
+  // that occurred when position jumped instantaneously while angle animated smoothly.
+  //
+  // Anchors:
+  // - Portrait (0°): exactly at bottom: 148, centered horizontally.
+  // - Landscape-left (90°): anchored near the photo's true bottom edge (SCREEN_HEIGHT - 250),
+  //   clearing the shutter button and bottom controls, docked along the right edge.
+  // - Landscape-right (270° / -90°): anchored near the photo's true bottom edge (250),
+  //   docked along the left edge.
+  const deltaX = SCREEN_WIDTH / 2 - BADGE_HEIGHT / 2 - 20;
+  const deltaY90 = (SCREEN_HEIGHT - 250) - (SCREEN_HEIGHT - 148 - BADGE_HEIGHT / 2);
+  const deltaY270 = 250 - (SCREEN_HEIGHT - 148 - BADGE_HEIGHT / 2);
 
-  if (rotationDegrees === 90) {
-    const centerX = SCREEN_WIDTH - BADGE_HEIGHT / 2 - 20;
-    const centerY = SCREEN_HEIGHT / 2;
-    liveBadgePositionStyle = {
-      position: 'absolute',
-      left: centerX - BADGE_WIDTH / 2,
-      top: centerY - BADGE_HEIGHT / 2,
-      zIndex: 15,
-    };
-  } else if (rotationDegrees === 270) {
-    const centerX = BADGE_HEIGHT / 2 + 20;
-    const centerY = SCREEN_HEIGHT / 2;
-    liveBadgePositionStyle = {
-      position: 'absolute',
-      left: centerX - BADGE_WIDTH / 2,
-      top: centerY - BADGE_HEIGHT / 2,
-      zIndex: 15,
-    };
-  }
+  const badgeTranslateX = animatedRotation.interpolate({
+    inputRange: [-90, 0, 90],
+    outputRange: [-deltaX, 0, deltaX],
+  });
+
+  const badgeTranslateY = animatedRotation.interpolate({
+    inputRange: [-90, 0, 90],
+    outputRange: [deltaY270, 0, deltaY90],
+  });
+
+  const badgeRotate = animatedRotation.interpolate({
+    inputRange: [-90, 0, 90],
+    outputRange: ['-90deg', '0deg', '90deg'],
+  });
 
   return (
     <View style={styles.container}>
@@ -561,10 +573,19 @@ export default function CameraScreen({ navigation }) {
         </View>
 
         {/* ================================================================= */}
-        {/* Live Rotating Watermark Badge (Always Bottom Center) */}
+        {/* Live Rotating Watermark Badge (Lockstep Animated Position & Angle) */}
         {/* ================================================================= */}
         <Animated.View
-          style={[liveBadgePositionStyle, rotationStyle]}
+          style={[
+            styles.liveBadgeContainer,
+            {
+              transform: [
+                { translateX: badgeTranslateX },
+                { translateY: badgeTranslateY },
+                { rotate: badgeRotate },
+              ],
+            },
+          ]}
           pointerEvents="box-none"
         >
           <WatermarkBadge
@@ -763,6 +784,15 @@ export default function CameraScreen({ navigation }) {
                 <Text style={styles.settingValue}>{savedCount}</Text>
               </View>
 
+              {user?.email && (
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingText}>Account</Text>
+                  <Text style={[styles.settingValue, { fontSize: 13, maxWidth: 190 }]} numberOfLines={1}>
+                    {user.email}
+                  </Text>
+                </View>
+              )}
+
               {canInstallPwa && (
                 <View style={styles.settingRow}>
                   <Text style={styles.settingText}>Install App (PWA)</Text>
@@ -778,8 +808,26 @@ export default function CameraScreen({ navigation }) {
                 </View>
               )}
 
+              {user && (
+                <TouchableOpacity
+                  style={styles.signOutBtn}
+                  onPress={async () => {
+                    try {
+                      setShowSettingsModal(false);
+                      await signOut();
+                    } catch (err) {
+                      Alert.alert('Sign Out Error', err?.message || 'Could not sign out.');
+                    }
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="log-out-outline" size={18} color="#ef4444" style={{ marginRight: 8 }} />
+                  <Text style={styles.signOutBtnText}>Sign Out</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
-                style={[styles.modalActionBtn, { marginTop: 20 }]}
+                style={[styles.modalActionBtn, { marginTop: 14 }]}
                 onPress={() => setShowSettingsModal(false)}
               >
                 <Text style={styles.modalActionBtnText}>Done</Text>
@@ -1117,5 +1165,29 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 13,
     fontWeight: '700',
+  },
+  liveBadgeContainer: {
+    position: 'absolute',
+    left: (SCREEN_WIDTH - BADGE_WIDTH) / 2,
+    bottom: 148,
+    width: BADGE_WIDTH,
+    height: BADGE_HEIGHT,
+    zIndex: 15,
+  },
+  signOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#271216',
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
+    borderRadius: 10,
+    paddingVertical: 12,
+    marginTop: 16,
+  },
+  signOutBtnText: {
+    color: '#ef4444',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
 });

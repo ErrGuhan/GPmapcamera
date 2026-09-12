@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,13 +10,16 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/theme';
 
 // ---------------------------------------------------------------------------
-// College Domain Restriction
+// College Domain Restriction & Storage Keys
 // ---------------------------------------------------------------------------
 const ALLOWED_EMAIL_DOMAIN = 'svcet.ac.in';
+const REMEMBERED_EMAIL_KEY = '@ourgpscam_remembered_email';
 
 /**
  * AuthScreen — handles both Sign In and Sign Up in a single screen with a
@@ -24,6 +27,9 @@ const ALLOWED_EMAIL_DOMAIN = 'svcet.ac.in';
  *
  * Domain-restricted: Only accounts with an email ending in @svcet.ac.in
  * are permitted to sign up or sign in.
+ *
+ * Remember Me: Remembers the entered college email in AsyncStorage for easy
+ * one-tap access on future sessions.
  *
  * Navigation: Once the user signs in/up, AuthContext updates `session`,
  * which causes App.js to swap to the Camera stack automatically — no
@@ -36,9 +42,25 @@ export default function AuthScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Hydrate remembered college email on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const savedEmail = await AsyncStorage.getItem(REMEMBERED_EMAIL_KEY);
+        if (savedEmail) {
+          setEmail(savedEmail);
+          setRememberMe(true);
+        }
+      } catch (e) {
+        console.warn('Failed to load remembered email:', e);
+      }
+    })();
+  }, []);
 
   const isSignUp = mode === 'signup';
 
@@ -86,6 +108,13 @@ export default function AuthScreen() {
     try {
       if (isSignUp) {
         await signUp(cleanEmail, password);
+        // Persist or remove remembered email
+        if (rememberMe) {
+          await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, cleanEmail);
+        } else {
+          await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+        }
+
         // Supabase may require email confirmation depending on project settings.
         // Show a message instead of assuming immediate sign-in.
         setSuccessMsg(
@@ -95,6 +124,12 @@ export default function AuthScreen() {
         setPassword('');
       } else {
         await signIn(cleanEmail, password);
+        // Persist or remove remembered email
+        if (rememberMe) {
+          await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, cleanEmail);
+        } else {
+          await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+        }
         // On success, App.js detects the new session and navigates automatically.
       }
     } catch (e) {
@@ -215,6 +250,22 @@ export default function AuthScreen() {
             </>
           )}
 
+          {/* Remember Me Checkbox */}
+          <TouchableOpacity
+            style={styles.rememberMeRow}
+            onPress={() => setRememberMe(!rememberMe)}
+            activeOpacity={0.8}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={rememberMe ? 'checkbox' : 'square-outline'}
+              size={22}
+              color={rememberMe ? COLORS.accent : '#777'}
+              style={styles.rememberMeIcon}
+            />
+            <Text style={styles.rememberMeText}>Remember my college email</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
             onPress={handleSubmit}
@@ -332,13 +383,30 @@ const styles = StyleSheet.create({
   },
   successText: { color: '#4ade80', fontSize: 13, lineHeight: 18 },
 
+  // Remember Me checkbox
+  rememberMeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 18,
+    marginBottom: 4,
+    paddingVertical: 4,
+  },
+  rememberMeIcon: {
+    marginRight: 10,
+  },
+  rememberMeText: {
+    color: '#ccc',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+
   // Submit button
   submitBtn: {
     backgroundColor: COLORS.accent,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 28,
+    marginTop: 24,
   },
   submitBtnDisabled: { opacity: 0.5 },
   submitBtnText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
