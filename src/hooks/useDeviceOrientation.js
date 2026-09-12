@@ -19,16 +19,126 @@ export function useDeviceOrientation() {
     let subscription = null;
     let isMounted = true;
 
+    // Helper to apply rotation transitions smoothly
+    const applyRotation = (newDeg, newAngle, newOrient) => {
+      setOrientation(newOrient);
+      setRotationDegrees(newDeg);
+      setRotationAngle(newAngle);
+
+      Animated.spring(animatedRotation, {
+        toValue: newAngle,
+        useNativeDriver: Platform.OS !== 'web',
+        friction: 8,
+        tension: 45,
+      }).start();
+    };
+
+    // -------------------------------------------------------------------------
+    // Web-specific Orientation Fallback (Platform.OS === 'web')
+    // Uses window.screen.orientation, orientationchange, and deviceorientation
+    // -------------------------------------------------------------------------
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      let currentWebOrientation = 'portrait';
+
+      const updateWebOrientation = (deg, angle, orient) => {
+        if (!isMounted || orient === currentWebOrientation) return;
+        currentWebOrientation = orient;
+        console.log(`[OurGpsCam] Web orientation updated to "${orient}" (${deg}°)`);
+        applyRotation(deg, angle, orient);
+      };
+
+      const handleScreenOrientationChange = () => {
+        const screenAngle = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+        const screenType = window.screen?.orientation?.type || '';
+        console.log(`[OurGpsCam] Screen orientation change detected: angle=${screenAngle}, type=${screenType}`);
+
+        if (screenAngle === 90 || screenType.includes('landscape-primary')) {
+          updateWebOrientation(90, 90, 'landscape-left');
+        } else if (screenAngle === 270 || screenAngle === -90 || screenType.includes('landscape-secondary')) {
+          updateWebOrientation(270, -90, 'landscape-right');
+        } else if (screenAngle === 0 || screenType.includes('portrait')) {
+          updateWebOrientation(0, 0, 'portrait');
+        } else if (window.innerWidth > window.innerHeight) {
+          updateWebOrientation(90, 90, 'landscape-left');
+        } else {
+          updateWebOrientation(0, 0, 'portrait');
+        }
+      };
+
+      // Direct IMU tilt listener: detects physical rotation even if Android user has system auto-rotate locked!
+      const handleDeviceTilt = (evt) => {
+        const { gamma, beta } = evt;
+        if (gamma === null || beta === null) return;
+
+        // If screen.orientation is already in landscape, let screen orientation rule
+        const sAngle = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+        if (sAngle === 90 || sAngle === 270 || sAngle === -90) return;
+
+        const absGamma = Math.abs(gamma);
+        const absBeta = Math.abs(beta);
+
+        // Strong sideways tilt: user is physically holding phone in landscape
+        if (absGamma > 45 && absGamma > absBeta * 1.3) {
+          if (gamma < 0) {
+            updateWebOrientation(90, 90, 'landscape-left');
+          } else {
+            updateWebOrientation(270, -90, 'landscape-right');
+          }
+        } else if (absBeta > 35 && absGamma < 28) {
+          // Upright portrait
+          updateWebOrientation(0, 0, 'portrait');
+        }
+      };
+
+      // Check initial orientation immediately
+      handleScreenOrientationChange();
+
+      // Listen for screen orientation changes
+      try {
+        window.screen?.orientation?.addEventListener('change', handleScreenOrientationChange);
+      } catch (e) {}
+      window.addEventListener('orientationchange', handleScreenOrientationChange);
+      window.addEventListener('resize', handleScreenOrientationChange);
+
+      // Listen for physical device tilt
+      if (typeof window.DeviceOrientationEvent !== 'undefined') {
+        window.addEventListener('deviceorientation', handleDeviceTilt);
+      }
+
+      // Check Accelerometer.isAvailableAsync on web as requested
+      (async () => {
+        try {
+          const available = await Accelerometer.isAvailableAsync();
+          console.log('[OurGpsCam] Accelerometer.isAvailableAsync():', available);
+        } catch (e) {
+          console.log('[OurGpsCam] Accelerometer.isAvailableAsync() threw:', e?.message || e);
+        }
+      })();
+
+      return () => {
+        isMounted = false;
+        try {
+          window.screen?.orientation?.removeEventListener('change', handleScreenOrientationChange);
+        } catch (e) {}
+        window.removeEventListener('orientationchange', handleScreenOrientationChange);
+        window.removeEventListener('resize', handleScreenOrientationChange);
+        window.removeEventListener('deviceorientation', handleDeviceTilt);
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // Native iOS / Android Accelerometer Path
+    // -------------------------------------------------------------------------
     (async () => {
       try {
         const available = await Accelerometer.isAvailableAsync();
+        console.log('[OurGpsCam] Accelerometer.isAvailableAsync():', available);
         if (!available || !isMounted) return;
 
         Accelerometer.setUpdateInterval(120);
 
         let lastX = 0;
         let lastY = -1;
-
         let currentOrientation = 'portrait';
 
         subscription = Accelerometer.addListener(({ x, y, z }) => {
@@ -44,9 +154,6 @@ export function useDeviceOrientation() {
           const absX = Math.abs(smoothX);
           const absY = Math.abs(smoothY);
 
-          // Robust hysteresis:
-          // In portrait: require strong intentional tilt (absX > 0.70 and horizontal dominance) to enter landscape.
-          // Once in landscape: stay in landscape until tilt drops significantly (absX < 0.45).
           let newOrientation = currentOrientation;
 
           if (currentOrientation === 'portrait') {
@@ -54,11 +161,9 @@ export function useDeviceOrientation() {
               newOrientation = smoothX < 0 ? 'landscape-left' : 'landscape-right';
             }
           } else {
-            // Currently in landscape
             if (absX < 0.45 || absY > absX * 1.2) {
               newOrientation = 'portrait';
             } else {
-              // Maintain or switch landscape side if direction reversed
               newOrientation = smoothX < 0 ? 'landscape-left' : 'landscape-right';
             }
           }
@@ -75,24 +180,11 @@ export function useDeviceOrientation() {
 
           if (newOrientation !== currentOrientation) {
             currentOrientation = newOrientation;
-            setOrientation(newOrientation);
-            setRotationDegrees(deg);
-            setRotationAngle(angle);
-
-            Animated.spring(animatedRotation, {
-              toValue: angle,
-              // useNativeDriver: true causes a GPU compositor conflict on web:
-              // the promoted compositing layer stacked over the CameraView <video>
-              // element causes Chrome/WebView to blank the video feed after ~5-8s.
-              // On native (iOS/Android) native driver is still used for 60fps perf.
-              useNativeDriver: Platform.OS !== 'web',
-              friction: 8,
-              tension: 45,
-            }).start();
+            applyRotation(deg, angle, newOrientation);
           }
         });
       } catch (e) {
-        // Accelerometer not available in current web browser
+        // Sensor error
       }
     })();
 
@@ -103,6 +195,7 @@ export function useDeviceOrientation() {
       } catch (e) {}
     };
   }, [animatedRotation]);
+
 
   const rotationInterpolate = animatedRotation.interpolate({
     inputRange: [-90, 0, 90],

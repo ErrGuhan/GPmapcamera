@@ -47,6 +47,8 @@ export default function CameraScreen({ navigation }) {
   const [zoom, setZoom] = useState(0); // 0 = 1x, 0.25 = 2x
   const [activeZoomLabel, setActiveZoomLabel] = useState('1x');
   const [exposure, setExposure] = useState(0); // -2 to +2
+  const [cameraVersion, setCameraVersion] = useState(0);
+  const [isCameraSwitching, setIsCameraSwitching] = useState(false);
 
   // Location & State
   const [isCapturing, setIsCapturing] = useState(false);
@@ -85,10 +87,16 @@ export default function CameraScreen({ navigation }) {
     })();
   }, []);
 
-  // Live Location & Time polling
+  // Live Location & Time polling with immediate coords resolution callback
   const fetchLocation = useCallback(async () => {
     try {
-      const data = await getLocationData();
+      const data = await getLocationData((interim) => {
+        // Immediately update coordinates on screen as soon as GPS resolves!
+        setLocationData((prev) => ({
+          coords: interim.coords,
+          address: interim.address || prev?.address || { city: 'Pinpointing...' },
+        }));
+      });
       setLocationData(data);
     } catch (e) {
       console.warn('Location fetch error:', e);
@@ -118,15 +126,73 @@ export default function CameraScreen({ navigation }) {
     });
   }, []);
 
-  // Camera Facing Toggle
-  const toggleFacing = useCallback(() => {
-    setFacing((prev) => {
-      const next = prev === 'back' ? 'front' : 'back';
-      setToastMessage(`Camera: ${next === 'back' ? 'Rear' : 'Front'}`);
-      setTimeout(() => setToastMessage(null), 1200);
-      return next;
-    });
+  // Helper to stop all active video tracks on web before switching camera
+  const stopAllWebCameraTracks = useCallback(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      try {
+        const videoElements = document.querySelectorAll('video');
+        videoElements.forEach((v) => {
+          if (v.srcObject && typeof v.srcObject.getTracks === 'function') {
+            v.srcObject.getTracks().forEach((track) => {
+              try {
+                track.stop();
+              } catch (e) {}
+            });
+            v.srcObject = null;
+          }
+        });
+      } catch (err) {
+        console.warn('[OurGpsCam] Error stopping video tracks:', err);
+      }
+    }
   }, []);
+
+  // Camera Facing Toggle with web track release, remount delay, and state sync
+  const toggleFacing = useCallback(() => {
+    if (Platform.OS === 'web') {
+      if (isCameraSwitching) return;
+      setIsCameraSwitching(true);
+
+      const next = facing === 'back' ? 'front' : 'back';
+      setToastMessage(`Camera: ${next === 'back' ? 'Rear' : 'Front'}`);
+
+      // 1. Explicitly stop running tracks on existing stream
+      stopAllWebCameraTracks();
+
+      // 2. Allow browser & Android camera HAL 150ms to release hardware handle
+      setTimeout(() => {
+        setFacing(next);
+        setCameraVersion((v) => v + 1);
+        setIsCameraSwitching(false);
+        setTimeout(() => setToastMessage(null), 1200);
+      }, 150);
+    } else {
+      setFacing((prev) => {
+        const next = prev === 'back' ? 'front' : 'back';
+        setToastMessage(`Camera: ${next === 'back' ? 'Rear' : 'Front'}`);
+        setTimeout(() => setToastMessage(null), 1200);
+        return next;
+      });
+    }
+  }, [facing, isCameraSwitching, stopAllWebCameraTracks]);
+
+  // Gracefully handle rear camera mount errors on web
+  const handleCameraMountError = useCallback((error) => {
+    console.warn('[OurGpsCam] Camera mount error:', error?.nativeEvent || error);
+    if (Platform.OS === 'web' && facing === 'back') {
+      console.warn('[OurGpsCam] Rear camera unavailable or errored out, reverting to front camera');
+      setToastMessage('Rear camera unavailable, switched back to front');
+      setTimeout(() => setToastMessage(null), 3000);
+      stopAllWebCameraTracks();
+      setIsCameraSwitching(true);
+      setTimeout(() => {
+        setFacing('front');
+        setCameraVersion((v) => v + 1);
+        setIsCameraSwitching(false);
+      }, 150);
+    }
+  }, [facing, stopAllWebCameraTracks]);
+
 
   // Zoom Handler
   const handleZoomChange = (label) => {
@@ -355,13 +421,18 @@ export default function CameraScreen({ navigation }) {
     <View style={styles.container}>
       <View style={styles.appShell}>
         {/* Live Camera Viewfinder */}
-        <CameraView
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          facing={facing}
-          flash={flash}
-          zoom={zoom}
-        />
+        {!isCameraSwitching && (
+          <CameraView
+            key={Platform.OS === 'web' ? `camera-${facing}-${cameraVersion}` : undefined}
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing={facing}
+            flash={flash}
+            zoom={zoom}
+            onMountError={handleCameraMountError}
+          />
+        )}
+
 
         {/* Grid Lines Overlay */}
         {showGrid && (
