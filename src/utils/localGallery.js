@@ -60,7 +60,7 @@ export async function saveLocalCapture({ uri, address, coords, dateTime }) {
         if (typeof document !== 'undefined') {
           const a = document.createElement('a');
           a.href = uri;
-          a.download = `GMC_${Date.now()}.jpg`;
+          a.download = `OurGpsCam_${Date.now()}.jpg`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);

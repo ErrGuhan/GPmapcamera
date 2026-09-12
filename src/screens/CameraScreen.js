@@ -58,6 +58,7 @@ export default function CameraScreen({ navigation }) {
   // Modals
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [canInstallPwa, setCanInstallPwa] = useState(false);
 
   // Load initial permissions and saved count
   useEffect(() => {
@@ -261,11 +262,52 @@ export default function CameraScreen({ navigation }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleCapture, toggleFlash, toggleFacing]);
 
+  // Web PWA Install Prompt Listener
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    if (window.deferredInstallPrompt) {
+      setCanInstallPwa(true);
+    }
+
+    const handleCanInstall = () => setCanInstallPwa(true);
+    const handleInstalled = () => {
+      setCanInstallPwa(false);
+      setToastMessage('OurGpsCam installed!');
+      setTimeout(() => setToastMessage(null), 2500);
+    };
+
+    window.addEventListener('ourgpscam-can-install', handleCanInstall);
+    window.addEventListener('ourgpscam-installed', handleInstalled);
+
+    return () => {
+      window.removeEventListener('ourgpscam-can-install', handleCanInstall);
+      window.removeEventListener('ourgpscam-installed', handleInstalled);
+    };
+  }, []);
+
+  const handleInstallPwa = useCallback(async () => {
+    if (typeof window !== 'undefined' && window.deferredInstallPrompt) {
+      try {
+        await window.deferredInstallPrompt.prompt();
+        const choice = await window.deferredInstallPrompt.userChoice;
+        if (choice?.outcome === 'accepted') {
+          setToastMessage('Installing OurGpsCam...');
+          setTimeout(() => setToastMessage(null), 2500);
+        }
+      } catch (err) {
+        console.warn('Install prompt error:', err);
+      }
+      window.deferredInstallPrompt = null;
+      setCanInstallPwa(false);
+    }
+  }, []);
+
   if (!cameraPermission?.granted) {
     return (
       <View style={styles.center}>
         <Text style={styles.permissionText}>
-          Camera permission is required to use GPS Map Camera.
+          Camera permission is required to use OurGpsCam.
         </Text>
         <TouchableOpacity
           style={styles.permissionButton}
@@ -396,6 +438,19 @@ export default function CameraScreen({ navigation }) {
             </Animated.View>
           </TouchableOpacity>
         </View>
+
+        {/* PWA Install Banner for Web */}
+        {canInstallPwa && (
+          <TouchableOpacity
+            style={styles.pwaInstallBanner}
+            onPress={handleInstallPwa}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="download-outline" size={15} color="#000" style={{ marginRight: 6 }} />
+            <Text style={styles.pwaInstallText}>Install OurGpsCam App</Text>
+            <Ionicons name="chevron-forward" size={14} color="#000" style={{ marginLeft: 4 }} />
+          </TouchableOpacity>
+        )}
 
         {/* ================================================================= */}
         {/* Right-Side Exposure / Brightness Slider */}
@@ -629,6 +684,21 @@ export default function CameraScreen({ navigation }) {
                 <Text style={styles.settingText}>Photos Saved</Text>
                 <Text style={styles.settingValue}>{savedCount}</Text>
               </View>
+
+              {canInstallPwa && (
+                <View style={styles.settingRow}>
+                  <Text style={styles.settingText}>Install App (PWA)</Text>
+                  <TouchableOpacity
+                    style={[styles.toggleBtn, styles.toggleBtnActive, { paddingHorizontal: 12 }]}
+                    onPress={() => {
+                      setShowSettingsModal(false);
+                      handleInstallPwa();
+                    }}
+                  >
+                    <Text style={styles.toggleBtnText}>INSTALL</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
               <TouchableOpacity
                 style={[styles.modalActionBtn, { marginTop: 20 }]}
@@ -942,5 +1012,27 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 12,
+  },
+  pwaInstallBanner: {
+    position: 'absolute',
+    top: 56,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    zIndex: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  pwaInstallText: {
+    color: '#000',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

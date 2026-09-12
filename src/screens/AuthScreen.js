@@ -100,7 +100,7 @@ export default function AuthScreen() {
           <View style={styles.logoMark}>
             <Text style={styles.logoIcon}>📍</Text>
           </View>
-          <Text style={styles.appName}>GPS Map Camera</Text>
+          <Text style={styles.appName}>OurGpsCam</Text>
           <Text style={styles.tagline}>Back up your geotagged photos to the cloud</Text>
         </View>
 

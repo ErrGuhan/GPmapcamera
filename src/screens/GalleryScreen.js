@@ -157,7 +157,7 @@ export default function GalleryScreen({ navigation }) {
                 />
                 <Text style={styles.emptyTitle}>No Photos Saved Yet</Text>
                 <Text style={styles.emptySubtitle}>
-                  Take photos with GPS Map Camera to save watermarked images to your local device memory!
+                  Take photos with OurGpsCam to save watermarked images to your local device memory!
                 </Text>
                 <TouchableOpacity
                   style={styles.takePhotoBtn}

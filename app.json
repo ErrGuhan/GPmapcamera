@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "GPS Map Camera",
+    "name": "OurGpsCam",
     "slug": "gps-map-camera",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -17,11 +17,14 @@
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro",
-      "name": "GPS Map Camera",
-      "shortName": "GPS Camera",
-      "description": "Geotagged photos with GPS coordinates, map preview, and timestamp watermark.",
+      "name": "OurGpsCam",
+      "shortName": "OurGpsCam",
+      "description": "Geotagged photos with live GPS coordinates, map preview, and timestamp watermark.",
       "themeColor": "#000000",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#000000",
+      "display": "standalone",
+      "orientation": "any",
+      "startUrl": "/"
     },
     "ios": {
       "supportsTablet": true,

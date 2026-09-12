@@ -1,22 +1,21 @@
-# GPS Map Camera
+# OurGpsCam (GPS Map Camera)
 
-A React Native (Expo) app that captures photos with a permanent watermark
-showing location, address, coordinates, and timestamp — similar to apps
-like "GPS Map Camera." Captured photos are backed up to Supabase with an
-offline-safe upload queue.
+A cross-platform React Native (Expo) & Progressive Web App (PWA) that captures photos with a permanent watermark showing live location, address, coordinates, map preview, and timestamp. Captured photos are saved locally and backed up to Supabase with an offline-safe upload queue.
 
 ## Features
 
+- **Progressive Web App (PWA)** — Installable on Android, iOS (Add to Home Screen), Windows, and Mac with offline app shell caching and service worker (`sw.js`)
 - Live camera preview with a real-time location overlay preview
 - GPS coordinates + reverse-geocoded address (city, region, country)
 - Formatted date/time with timezone offset
 - Static map thumbnail (Google Static Maps API)
 - Overlay burned permanently into the saved photo (not just UI)
-- Saves final image to the device's photo gallery
+- Saves final image to the device's photo gallery / local download on web
 - **Email/password auth via Supabase Auth**
 - **Automatic cloud backup to Supabase Storage after each capture**
 - **Offline-safe upload queue** — queues failed uploads and retries on reconnect
 - **Cloud gallery tab** — browse all cloud-backed captures with pull-to-refresh
+- **Orientation-aware bottom-center watermark** in both portrait and landscape
 
 ## Project Structure
 

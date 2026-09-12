@@ -39,10 +39,10 @@ function WatermarkBadge({
 
   return (
     <View style={[styles.container, style]}>
-      {/* Top right GPS Map Camera tag */}
+      {/* Top right OurGpsCam brand tag */}
       <View style={styles.topRightTag}>
         <Ionicons name="camera" size={10} color="#FFD400" style={{ marginRight: 3 }} />
-        <Text style={styles.tagText}>GPS Map Camera</Text>
+        <Text style={styles.tagText}>OurGpsCam</Text>
       </View>
 
       <View style={styles.contentRow}>
