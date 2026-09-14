@@ -141,6 +141,22 @@ export default function AuthScreen() {
         msg.toLowerCase().includes('domain')
       ) {
         setError(`Only @${ALLOWED_EMAIL_DOMAIN} college email addresses can access this app.`);
+      } else if (
+        msg.toLowerCase().includes('failed to fetch') ||
+        msg.toLowerCase().includes('network') ||
+        msg.toLowerCase().includes('load failed')
+      ) {
+        setError('Network connection error. Please check your internet connection and try again.');
+      } else if (
+        msg.includes('invalid_credentials') ||
+        msg.toLowerCase().includes('invalid login credentials')
+      ) {
+        setError('Invalid email or password. If you recently created your account, please check your college email to confirm your account first.');
+      } else if (
+        msg.toLowerCase().includes('already registered') ||
+        msg.toLowerCase().includes('already exists')
+      ) {
+        setError('An account with this college email already exists. Please switch to Sign In.');
       } else {
         setError(msg || 'Something went wrong. Please try again.');
       }

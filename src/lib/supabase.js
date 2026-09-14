@@ -14,28 +14,26 @@ try {
   // @env not available in standard web / Vercel runtime
 }
 
-// Support Vercel Dashboard env vars, EXPO_PUBLIC_* standard, and @env
+// Default Supabase project credentials.
+// The anon/publishable key is explicitly safe for public client-side use under Row Level Security (RLS).
+const DEFAULT_SUPABASE_URL = 'https://euyiaveqzvdmiveqenij.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_wyVEQfXPxqVC1jtOVZrcew_r-b9pNad';
+
+// Support Vercel Dashboard env vars, EXPO_PUBLIC_* standard, @env, and fallback to default project
 const resolvedUrl =
-  envUrl ||
   (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_SUPABASE_URL) ||
   (typeof process !== 'undefined' && process.env?.SUPABASE_URL) ||
-  '';
+  envUrl ||
+  DEFAULT_SUPABASE_URL;
 
 const resolvedKey =
-  envKey ||
   (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_SUPABASE_ANON_KEY) ||
   (typeof process !== 'undefined' && process.env?.SUPABASE_ANON_KEY) ||
-  '';
+  envKey ||
+  DEFAULT_SUPABASE_ANON_KEY;
 
-if (!resolvedUrl || !resolvedKey) {
-  console.warn(
-    '⚠️ Missing Supabase environment variables! Please configure SUPABASE_URL and SUPABASE_ANON_KEY in your Vercel Dashboard or .env file.'
-  );
-}
-
-// Fallback dummy credentials to prevent createClient from crashing if env vars are pending in Vercel
-const effectiveUrl = resolvedUrl || 'https://placeholder-project.supabase.co';
-const effectiveKey = resolvedKey || 'placeholder-anon-key';
+const effectiveUrl = resolvedUrl || DEFAULT_SUPABASE_URL;
+const effectiveKey = resolvedKey || DEFAULT_SUPABASE_ANON_KEY;
 
 /**
  * Singleton Supabase client.
