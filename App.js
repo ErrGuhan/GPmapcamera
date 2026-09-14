@@ -18,8 +18,11 @@ function AppContent() {
   const { session, loading } = useAuth();
 
   useEffect(() => {
-    // Clear any previous queued background retries to keep local logs clean
-    clearLegacyUploadQueue();
+    // Non-blocking deferred queue cleanup after initial paint
+    const timer = setTimeout(() => {
+      clearLegacyUploadQueue();
+    }, 1200);
+    return () => clearTimeout(timer);
   }, []);
 
   // Show splash / loading spinner during initial session hydration from AsyncStorage
@@ -32,29 +35,24 @@ function AppContent() {
     );
   }
 
-  // Not signed in: show domain-restricted AuthScreen (Login / Sign Up)
-  if (!session) {
-    return (
-      <View style={styles.authContainer}>
-        <StatusBar style="light" />
-        <AuthScreen />
-      </View>
-    );
-  }
-
-  // Authenticated user: mount main camera stack
+  // Root NavigationContainer with conditional stack routes based on user session
   return (
     <NavigationContainer>
-      <StatusBar style="light" hidden />
+      <StatusBar style="light" hidden={!!session} />
       <Stack.Navigator
-        initialRouteName="Camera"
         screenOptions={{
           headerShown: false,
           animation: 'fade',
         }}
       >
-        <Stack.Screen name="Camera" component={CameraScreen} />
-        <Stack.Screen name="Gallery" component={GalleryScreen} />
+        {!session ? (
+          <Stack.Screen name="Auth" component={AuthScreen} />
+        ) : (
+          <>
+            <Stack.Screen name="Camera" component={CameraScreen} />
+            <Stack.Screen name="Gallery" component={GalleryScreen} />
+          </>
+        )}
       </Stack.Navigator>
     </NavigationContainer>
   );

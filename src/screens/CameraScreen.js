@@ -67,10 +67,12 @@ export default function CameraScreen({ navigation }) {
   const [toastMessage, setToastMessage] = useState(null);
   const [savedCount, setSavedCount] = useState(0);
 
-  // Modals
+  // Modals & In-UI Alerts
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [canInstallPwa, setCanInstallPwa] = useState(false);
+  const [showLocationPromptBanner, setShowLocationPromptBanner] = useState(false);
+  const [showNoGpsConfirmModal, setShowNoGpsConfirmModal] = useState(false);
 
   // Load initial permissions and saved count
   useEffect(() => {
@@ -108,19 +110,81 @@ export default function CameraScreen({ navigation }) {
         }));
       });
       setLocationData(data);
+      setShowLocationPromptBanner(false);
     } catch (e) {
       console.warn('Location fetch error:', e);
     }
   }, []);
 
+  // User-gesture location request handler to satisfy mobile browser restrictions
+  const handleRequestLocation = useCallback(async () => {
+    console.log('[OurGpsCam] User gesture triggered location request');
+    setToastMessage('Acquiring GPS location...');
+    try {
+      await fetchLocation();
+      setShowLocationPromptBanner(false);
+      setTimeout(() => setToastMessage(null), 1500);
+    } catch (e) {
+      console.warn('[OurGpsCam] Location request error:', e);
+      setToastMessage('Could not acquire GPS');
+      setTimeout(() => setToastMessage(null), 2000);
+    }
+  }, [fetchLocation]);
+
+  // Check location permission state on mount (especially on web to respect user gesture requirement)
   useEffect(() => {
-    fetchLocation();
-    const locInterval = setInterval(fetchLocation, 12000);
+    let isMounted = true;
+
+    async function checkInitialLocationPermission() {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.permissions?.query) {
+        try {
+          const perm = await navigator.permissions.query({ name: 'geolocation' });
+          console.log(`[OurGpsCam] Geolocation permission state on mount: ${perm.state}`);
+          if (!isMounted) return;
+
+          if (perm.state === 'granted') {
+            // Already granted: safe to fetch immediately
+            fetchLocation();
+            setShowLocationPromptBanner(false);
+          } else if (perm.state === 'prompt') {
+            // Unprompted: DO NOT auto-fire silent request. Show clear in-UI prompt banner!
+            setShowLocationPromptBanner(true);
+          } else if (perm.state === 'denied') {
+            setShowLocationPromptBanner(false);
+          }
+
+          // React to permission changes dynamically (e.g. granted via browser dialog)
+          perm.onchange = () => {
+            if (!isMounted) return;
+            console.log(`[OurGpsCam] Geolocation permission state changed to: ${perm.state}`);
+            if (perm.state === 'granted') {
+              setShowLocationPromptBanner(false);
+              fetchLocation();
+            }
+          };
+        } catch (err) {
+          console.warn('[OurGpsCam] Geolocation permissions query error:', err);
+          fetchLocation();
+        }
+      } else {
+        // Native platforms (iOS/Android): standard fetchLocation
+        fetchLocation();
+      }
+    }
+
+    checkInitialLocationPermission();
+
+    const locInterval = setInterval(() => {
+      // Periodic background refresh if granted or location exists
+      fetchLocation();
+    }, 12000);
+
     const timeInterval = setInterval(() => {
       setDateTime(getFormattedDateTime());
     }, 1000);
 
     return () => {
+      isMounted = false;
       clearInterval(locInterval);
       clearInterval(timeInterval);
     };
@@ -204,12 +268,41 @@ export default function CameraScreen({ navigation }) {
   }, [facing, stopAllWebCameraTracks]);
 
 
+  // Compute hardware-calibrated 2x zoom fraction
+  const get2xZoomFraction = useCallback(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      try {
+        const videoElements = document.querySelectorAll('video');
+        for (const v of videoElements) {
+          const track = v.srcObject?.getVideoTracks?.()[0];
+          const capabilities = track?.getCapabilities?.();
+          if (capabilities?.zoom) {
+            const { min = 1, max = 1 } = capabilities.zoom;
+            if (max > min && min <= 2 && 2 <= max) {
+              // Normalized fraction in expo-camera: (target - min) / (max - min)
+              const fraction = (2 - min) / (max - min);
+              return Math.min(1, Math.max(0, fraction));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[OurGpsCam] Could not query video track zoom capabilities:', e);
+      }
+    }
+    // Empirically tested modest 2x default fraction (0.08 produces natural 2x magnification)
+    return 0.08;
+  }, []);
+
   // Zoom Handler
-  const handleZoomChange = (label) => {
+  const handleZoomChange = useCallback((label) => {
     setActiveZoomLabel(label);
-    if (label === '1x') setZoom(0);
-    else if (label === '2x') setZoom(0.25);
-  };
+    if (label === '1x') {
+      setZoom(0);
+    } else if (label === '2x') {
+      const target2x = get2xZoomFraction();
+      setZoom(target2x);
+    }
+  }, [get2xZoomFraction]);
 
   // Vertical Exposure Slider PanResponder with render-throttling
   const exposureRef = useRef(exposure);
@@ -229,8 +322,8 @@ export default function CameraScreen({ navigation }) {
     })
   ).current;
 
-  // Capture & Watermark Handler
-  const handleCapture = useCallback(async () => {
+  // Execute Capture & Watermark Compositing
+  const executeCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
     setIsCapturing(true);
 
@@ -310,11 +403,35 @@ export default function CameraScreen({ navigation }) {
       setTimeout(() => setToastMessage(null), 2500);
     } catch (error) {
       console.error(error);
-      Alert.alert('Capture Failed', error.message || 'Could not take photo.');
+      if (Platform.OS === 'web') {
+        setToastMessage(`Capture Failed: ${error.message || 'Error'}`);
+        setTimeout(() => setToastMessage(null), 3000);
+      } else {
+        Alert.alert('Capture Failed', error.message || 'Could not take photo.');
+      }
     } finally {
       setIsCapturing(false);
     }
   }, [isCapturing, locationData, rotationDegrees]);
+
+  // Main Shutter Trigger with Unresolved Location Check
+  const handleCapture = useCallback(() => {
+    if (isCapturing) return;
+
+    // Check if location has resolved with valid coordinates
+    const hasResolvedGps =
+      locationData?.coords &&
+      (locationData.coords.latitude !== 0 || locationData.coords.longitude !== 0) &&
+      locationData.address?.city !== 'Unknown' &&
+      locationData.address?.city !== 'Detecting...';
+
+    if (!hasResolvedGps) {
+      setShowNoGpsConfirmModal(true);
+      return;
+    }
+
+    executeCapture();
+  }, [executeCapture, isCapturing, locationData]);
 
   // Web keyboard shortcuts for easy desktop access
   useEffect(() => {
@@ -332,6 +449,7 @@ export default function CameraScreen({ navigation }) {
       } else if (e.key === 'Escape') {
         setShowLocationModal(false);
         setShowSettingsModal(false);
+        setShowNoGpsConfirmModal(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -441,18 +559,18 @@ export default function CameraScreen({ navigation }) {
             facing={facing}
             flash={flash}
             zoom={zoom}
+            isPinchToZoomEnabled={true}
             onMountError={handleCameraMountError}
           />
         )}
 
-
-        {/* Grid Lines Overlay */}
+        {/* Grid Lines Overlay (Proper Rule-of-Thirds 3x3) */}
         {showGrid && (
           <View style={styles.gridOverlay} pointerEvents="none">
             <View style={styles.gridCol} />
             <View style={styles.gridCol} />
-            <View style={styles.gridRow} />
-            <View style={styles.gridRow} />
+            <View style={[styles.gridRow, styles.gridRowTop]} />
+            <View style={[styles.gridRow, styles.gridRowBottom]} />
           </View>
         )}
 
@@ -498,7 +616,13 @@ export default function CameraScreen({ navigation }) {
           {/* 3. Location Info */}
           <TouchableOpacity
             style={styles.topBarBtn}
-            onPress={() => setShowLocationModal(true)}
+            onPress={() => {
+              if (showLocationPromptBanner) {
+                handleRequestLocation();
+              } else {
+                setShowLocationModal(true);
+              }
+            }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Animated.View style={rotationStyle}>
@@ -547,6 +671,23 @@ export default function CameraScreen({ navigation }) {
             <Ionicons name="download-outline" size={15} color="#000" style={{ marginRight: 6 }} />
             <Text style={styles.pwaInstallText}>Install OurGpsCam App</Text>
             <Ionicons name="chevron-forward" size={14} color="#000" style={{ marginLeft: 4 }} />
+          </TouchableOpacity>
+        )}
+
+        {/* Location Permission In-UI Banner (Requires User Gesture on Web) */}
+        {showLocationPromptBanner && (
+          <TouchableOpacity
+            style={styles.locationPromptBanner}
+            onPress={handleRequestLocation}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="navigate-circle" size={20} color="#000" style={{ marginRight: 8 }} />
+            <Text style={styles.locationPromptBannerText}>
+              Tap to enable location for GPS watermark
+            </Text>
+            <View style={styles.locationPromptPill}>
+              <Text style={styles.locationPromptPillText}>Enable</Text>
+            </View>
           </TouchableOpacity>
         )}
 
@@ -814,9 +955,11 @@ export default function CameraScreen({ navigation }) {
                   onPress={async () => {
                     try {
                       setShowSettingsModal(false);
+                      setToastMessage('Signing out...');
                       await signOut();
                     } catch (err) {
-                      Alert.alert('Sign Out Error', err?.message || 'Could not sign out.');
+                      setToastMessage(err?.message || 'Could not sign out.');
+                      setTimeout(() => setToastMessage(null), 2500);
                     }
                   }}
                   activeOpacity={0.8}
@@ -832,6 +975,45 @@ export default function CameraScreen({ navigation }) {
               >
                 <Text style={styles.modalActionBtnText}>Done</Text>
               </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Confirmation Modal when Location is Unresolved */}
+        <Modal
+          visible={showNoGpsConfirmModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowNoGpsConfirmModal(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.confirmModalCard}>
+              <View style={styles.confirmModalIcon}>
+                <Ionicons name="location-outline" size={32} color="#f59e0b" />
+              </View>
+              <Text style={styles.confirmModalTitle}>Location Not Found</Text>
+              <Text style={styles.confirmModalDesc}>
+                Location hasn't been found yet — this photo will be saved without GPS data.{'\n\n'}Capture anyway?
+              </Text>
+              <View style={styles.confirmModalBtnRow}>
+                <TouchableOpacity
+                  style={styles.confirmCancelBtn}
+                  onPress={() => setShowNoGpsConfirmModal(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.confirmCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.confirmProceedBtn}
+                  onPress={() => {
+                    setShowNoGpsConfirmModal(false);
+                    executeCapture();
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.confirmProceedBtnText}>Capture Anyway</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </Modal>
@@ -896,6 +1078,12 @@ const styles = StyleSheet.create({
     right: 0,
     height: 1,
     backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  gridRowTop: {
+    top: '33.33%',
+  },
+  gridRowBottom: {
+    top: '66.66%',
   },
 
 
@@ -1187,6 +1375,107 @@ const styles = StyleSheet.create({
   },
   signOutBtnText: {
     color: '#ef4444',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+
+  // Location Gesture Prompt Banner
+  locationPromptBanner: {
+    position: 'absolute',
+    top: Platform.OS === 'web' ? 62 : 94,
+    left: 16,
+    right: 16,
+    backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    zIndex: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  locationPromptBannerText: {
+    flex: 1,
+    color: '#000',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  locationPromptPill: {
+    backgroundColor: '#000',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  locationPromptPillText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
+  // No GPS Confirmation Modal
+  confirmModalCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 20,
+    padding: 24,
+    width: '90%',
+    maxWidth: 380,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  confirmModalIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  confirmModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  confirmModalDesc: {
+    fontSize: 14,
+    color: '#94a3b8',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  confirmModalBtnRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  confirmCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#334155',
+    alignItems: 'center',
+  },
+  confirmCancelBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  confirmProceedBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: COLORS.accent,
+    alignItems: 'center',
+  },
+  confirmProceedBtnText: {
+    color: '#000',
     fontSize: 14,
     fontWeight: 'bold',
   },

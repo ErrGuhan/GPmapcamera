@@ -23,21 +23,46 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let mounted = true;
+
+    // Safety timeout: if getSession is delayed by network, unblock after 1.5s
+    const timer = setTimeout(() => {
+      if (mounted) setLoading(false);
+    }, 1500);
+
     // Hydrate session from AsyncStorage on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (mounted) {
+          setSession(session);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.warn('Auth session hydration warning:', err);
+        if (mounted) setLoading(false);
+      })
+      .finally(() => {
+        clearTimeout(timer);
+      });
 
     // Keep session in sync with Supabase auth state changes
     // (token refresh, sign-out from another tab, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        setSession(session);
+        if (mounted) {
+          setSession(session);
+          setLoading(false);
+        }
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      clearTimeout(timer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   // ---------------------------------------------------------------------------

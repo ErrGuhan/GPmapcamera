@@ -61,28 +61,22 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 1. Navigation requests: Network-first, fallback to cached /index.html (Offline Shell)
+  // 1. Navigation requests: Stale-While-Revalidate with instant /index.html shell
   if (request.mode === 'navigate' || request.destination === 'document') {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          // Clone and cache the updated index.html
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(async () => {
-          // Network offline: return cached index.html
-          const cachedShell = await caches.match('/index.html');
-          if (cachedShell) return cachedShell;
-          const matched = await caches.match(request);
-          return matched || new Response('Offline - OurGpsCam', {
-            status: 200,
-            headers: { 'Content-Type': 'text/html' }
-          });
-        })
+      caches.match('/index.html').then((cachedShell) => {
+        const fetchPromise = fetch(request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              const clone = networkResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            }
+            return networkResponse;
+          })
+          .catch(() => cachedShell);
+
+        return cachedShell || fetchPromise;
+      })
     );
     return;
   }
