@@ -25,10 +25,11 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let mounted = true;
 
-    // Safety timeout: if getSession is delayed by network, unblock after 1.5s
+    // Safety timeout: generous 5-second upper bound as a true last-resort
+    // fallback for hung network requests, preventing login flash on slow connections.
     const timer = setTimeout(() => {
       if (mounted) setLoading(false);
-    }, 1500);
+    }, 5000);
 
     // Hydrate session from AsyncStorage on mount
     supabase.auth

@@ -18,14 +18,20 @@ const PRECACHE_ASSETS = [
   '/icons/icon-512.png'
 ];
 
-// Install Event: Pre-cache core app shell and activate immediately
+// Install Event: Pre-cache core app shell individually and activate immediately
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => {
-        return cache.addAll(PRECACHE_ASSETS).catch((err) => {
-          console.warn('[OurGpsCam SW] Pre-cache partial failure:', err);
+      .then(async (cache) => {
+        // Use Promise.allSettled so a single missing/failed asset doesn't break precaching for the rest
+        const results = await Promise.allSettled(
+          PRECACHE_ASSETS.map((asset) => cache.add(asset))
+        );
+        results.forEach((res, idx) => {
+          if (res.status === 'rejected') {
+            console.warn(`[OurGpsCam SW] Pre-cache failed for ${PRECACHE_ASSETS[idx]}:`, res.reason);
+          }
         });
       })
       .then(() => self.skipWaiting())

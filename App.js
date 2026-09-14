@@ -9,21 +9,12 @@ import CameraScreen from './src/screens/CameraScreen';
 import GalleryScreen from './src/screens/GalleryScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
-import { clearLegacyUploadQueue } from './src/utils/localGallery';
 import { COLORS } from './src/constants/theme';
 
 const Stack = createNativeStackNavigator();
 
 function AppContent() {
   const { session, loading } = useAuth();
-
-  useEffect(() => {
-    // Non-blocking deferred queue cleanup after initial paint
-    const timer = setTimeout(() => {
-      clearLegacyUploadQueue();
-    }, 1200);
-    return () => clearTimeout(timer);
-  }, []);
 
   // Show splash / loading spinner during initial session hydration from AsyncStorage
   if (loading) {

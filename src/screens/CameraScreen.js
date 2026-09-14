@@ -23,6 +23,8 @@ import { getLocationData, getStaticMapUrl } from '../utils/location';
 import { getFormattedDateTime } from '../utils/dateTime';
 import { cleanupTempFile } from '../utils/overlay';
 import { saveLocalCapture, getLocalCaptures } from '../utils/localGallery';
+import { uploadCapture, enqueuePendingUpload } from '../utils/upload';
+import { useUploadQueue } from '../hooks/useUploadQueue';
 import { useDeviceOrientation } from '../hooks/useDeviceOrientation';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../constants/theme';
@@ -36,6 +38,9 @@ export default function CameraScreen({ navigation }) {
 
   // Authentication session & actions
   const { user, signOut } = useAuth();
+
+  // Background queue worker: automatically retries pending uploads when online
+  useUploadQueue();
 
   // Device orientation sensor with smooth animated value
   const {
@@ -65,6 +70,7 @@ export default function CameraScreen({ navigation }) {
   const [locationData, setLocationData] = useState(null);
   const [dateTime, setDateTime] = useState(getFormattedDateTime());
   const [toastMessage, setToastMessage] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState(null); // 'uploading' | 'saved' | 'pending' | null
   const [savedCount, setSavedCount] = useState(0);
 
   // Modals & In-UI Alerts
@@ -401,6 +407,34 @@ export default function CameraScreen({ navigation }) {
       setSavedCount((c) => c + 1);
       setToastMessage('✓ Photo saved to gallery!');
       setTimeout(() => setToastMessage(null), 2500);
+
+      // Fire-and-forget Supabase cloud upload pipeline
+      if (user?.id) {
+        const metadata = {
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
+          address: address || {},
+          capturedAt: new Date().toISOString(),
+        };
+
+        setUploadStatus('uploading');
+        uploadCapture(finalUri, user.id, metadata)
+          .then(() => {
+            setUploadStatus('saved');
+            setTimeout(() => setUploadStatus(null), 2500);
+          })
+          .catch((uploadErr) => {
+            console.warn('[CameraScreen] Cloud upload failed, queueing offline:', uploadErr?.message || uploadErr);
+            enqueuePendingUpload({
+              id: `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+              localUri: finalUri,
+              userId: user.id,
+              metadata,
+            });
+            setUploadStatus('pending');
+            setTimeout(() => setUploadStatus(null), 3000);
+          });
+      }
     } catch (error) {
       console.error(error);
       if (Platform.OS === 'web') {
@@ -412,7 +446,7 @@ export default function CameraScreen({ navigation }) {
     } finally {
       setIsCapturing(false);
     }
-  }, [isCapturing, locationData, rotationDegrees]);
+  }, [isCapturing, locationData, rotationDegrees, user?.id]);
 
   // Main Shutter Trigger with Unresolved Location Check
   const handleCapture = useCallback(() => {
@@ -834,6 +868,28 @@ export default function CameraScreen({ navigation }) {
           </View>
         )}
 
+        {/* Non-blocking Cloud Upload Status Badge */}
+        {uploadStatus && (
+          <View style={styles.uploadStatusBadge} pointerEvents="none">
+            {uploadStatus === 'uploading' && (
+              <ActivityIndicator size="small" color={COLORS.accent} style={{ marginRight: 6 }} />
+            )}
+            {uploadStatus === 'saved' && (
+              <Ionicons name="cloud-done" size={16} color="#4ade80" style={{ marginRight: 6 }} />
+            )}
+            {uploadStatus === 'pending' && (
+              <Ionicons name="cloud-offline" size={16} color="#fbbf24" style={{ marginRight: 6 }} />
+            )}
+            <Text style={styles.uploadStatusText}>
+              {uploadStatus === 'uploading'
+                ? 'Uploading…'
+                : uploadStatus === 'saved'
+                ? 'Saved to cloud'
+                : 'Upload pending (offline)'}
+            </Text>
+          </View>
+        )}
+
         {/* Location Details Modal */}
         <Modal
           visible={showLocationModal}
@@ -1249,6 +1305,30 @@ const styles = StyleSheet.create({
   toastText: {
     color: '#fff',
     fontSize: 13,
+    fontWeight: '700',
+  },
+  uploadStatusBadge: {
+    position: 'absolute',
+    bottom: 116,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 212, 0, 0.35)',
+    zIndex: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  uploadStatusText: {
+    color: '#ffffff',
+    fontSize: 12,
     fontWeight: '700',
   },
 

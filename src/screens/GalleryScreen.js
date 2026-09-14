@@ -16,14 +16,27 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getLocalCaptures, deleteLocalCapture } from '../utils/localGallery';
+import { getSignedUrl } from '../utils/upload';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { COLORS } from '../constants/theme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function GalleryScreen({ navigation }) {
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState('local'); // 'local' | 'cloud'
+
+  // Local Device Captures State
   const [captures, setCaptures] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Cloud Captures State (completely separated)
+  const [cloudCaptures, setCloudCaptures] = useState([]);
+  const [cloudLoading, setCloudLoading] = useState(false);
+  const [cloudRefreshing, setCloudRefreshing] = useState(false);
+
   const [selectedPhoto, setSelectedPhoto] = useState(null);
 
   const loadCaptures = useCallback(async () => {
@@ -38,9 +51,77 @@ export default function GalleryScreen({ navigation }) {
     }
   }, []);
 
+  const loadCloudCaptures = useCallback(async () => {
+    if (!user?.id) {
+      setCloudCaptures([]);
+      setCloudLoading(false);
+      setCloudRefreshing(false);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('captures')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('captured_at', { ascending: false });
+
+      if (error) {
+        console.warn('Failed to load cloud captures:', error.message);
+        setCloudCaptures([]);
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        setCloudCaptures([]);
+        return;
+      }
+
+      // Resolve signed URLs for private Supabase Storage objects
+      const resolved = await Promise.all(
+        data.map(async (row) => {
+          let signedUrl = null;
+          if (row.storage_path) {
+            signedUrl = await getSignedUrl(row.storage_path);
+          }
+          return {
+            id: row.id,
+            storagePath: row.storage_path,
+            uri: signedUrl || '',
+            address: {
+              city: row.address_city || 'Location',
+              region: row.address_region || '',
+              country: row.address_country || '',
+            },
+            coords:
+              row.latitude != null && row.longitude != null
+                ? { latitude: row.latitude, longitude: row.longitude }
+                : null,
+            dateTime: row.captured_at ? new Date(row.captured_at).toLocaleString() : '',
+            isCloud: true,
+          };
+        })
+      );
+
+      setCloudCaptures(resolved);
+    } catch (err) {
+      console.warn('Error querying cloud captures:', err);
+    } finally {
+      setCloudLoading(false);
+      setCloudRefreshing(false);
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     loadCaptures();
   }, [loadCaptures]);
+
+  useEffect(() => {
+    if (activeTab === 'cloud') {
+      setCloudLoading(true);
+      loadCloudCaptures();
+    }
+  }, [activeTab, loadCloudCaptures]);
 
   // Web keyboard shortcut: Escape closes modal
   useEffect(() => {
@@ -55,22 +136,41 @@ export default function GalleryScreen({ navigation }) {
   }, []);
 
   const handleRefresh = () => {
-    setRefreshing(true);
-    loadCaptures();
+    if (activeTab === 'local') {
+      setRefreshing(true);
+      loadCaptures();
+    } else {
+      setCloudRefreshing(true);
+      loadCloudCaptures();
+    }
   };
 
   const handleDelete = (item) => {
     Alert.alert(
       'Delete Photo',
-      'Are you sure you want to delete this watermarked photo?',
+      item.isCloud
+        ? 'Are you sure you want to delete this photo from your Cloud storage?'
+        : 'Are you sure you want to delete this watermarked photo from this device?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            const updated = await deleteLocalCapture(item.id);
-            setCaptures(updated);
+            if (item.isCloud) {
+              try {
+                if (item.storagePath) {
+                  await supabase.storage.from('captures').remove([item.storagePath]).catch(() => {});
+                }
+                await supabase.from('captures').delete().eq('id', item.id);
+                setCloudCaptures((prev) => prev.filter((c) => c.id !== item.id));
+              } catch (delErr) {
+                console.warn('Cloud delete error:', delErr);
+              }
+            } else {
+              const updated = await deleteLocalCapture(item.id);
+              setCaptures(updated);
+            }
             setSelectedPhoto(null);
           },
         },
@@ -95,14 +195,32 @@ export default function GalleryScreen({ navigation }) {
       activeOpacity={0.8}
       onPress={() => setSelectedPhoto(item)}
     >
-      <Image source={{ uri: item.uri }} style={styles.thumb} resizeMode="cover" />
+      {item.uri ? (
+        <Image source={{ uri: item.uri }} style={styles.thumb} resizeMode="cover" />
+      ) : (
+        <View style={[styles.thumb, styles.thumbPlaceholder]}>
+          <ActivityIndicator size="small" color={COLORS.accent} />
+        </View>
+      )}
       <View style={styles.thumbBadge}>
+        {item.isCloud && (
+          <Ionicons
+            name="cloud-outline"
+            size={10}
+            color={COLORS.accent}
+            style={{ marginRight: 3 }}
+          />
+        )}
         <Text style={styles.thumbBadgeText} numberOfLines={1}>
           {item.address?.city || 'GPS Photo'}
         </Text>
       </View>
     </TouchableOpacity>
   );
+
+  const currentData = activeTab === 'local' ? captures : cloudCaptures;
+  const isCurrentLoading = activeTab === 'local' ? loading : cloudLoading;
+  const isCurrentRefreshing = activeTab === 'local' ? refreshing : cloudRefreshing;
 
   return (
     <View style={styles.container}>
@@ -117,7 +235,11 @@ export default function GalleryScreen({ navigation }) {
             <Ionicons name="chevron-back" size={18} color={COLORS.accent} />
             <Text style={styles.backText}>Camera</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Local Gallery ({captures.length})</Text>
+          <Text style={styles.title}>
+            {activeTab === 'local'
+              ? `Local Gallery (${captures.length})`
+              : `Cloud Gallery (${cloudCaptures.length})`}
+          </Text>
           <TouchableOpacity
             style={styles.refreshIconBtn}
             onPress={handleRefresh}
@@ -127,21 +249,62 @@ export default function GalleryScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* Segmented Control Tab Bar */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'local' && styles.tabBtnActive]}
+            onPress={() => setActiveTab('local')}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name="phone-portrait-outline"
+              size={15}
+              color={activeTab === 'local' ? '#000' : '#94a3b8'}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[styles.tabText, activeTab === 'local' && styles.tabTextActive]}>
+              On Device ({captures.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabBtn, activeTab === 'cloud' && styles.tabBtnActive]}
+            onPress={() => {
+              setActiveTab('cloud');
+              if (cloudCaptures.length === 0) {
+                setCloudLoading(true);
+                loadCloudCaptures();
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name="cloud-outline"
+              size={15}
+              color={activeTab === 'cloud' ? '#000' : '#94a3b8'}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[styles.tabText, activeTab === 'cloud' && styles.tabTextActive]}>
+              Cloud ({cloudCaptures.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Grid */}
-        {loading ? (
+        {isCurrentLoading ? (
           <View style={styles.center}>
             <ActivityIndicator color={COLORS.accent} size="large" />
           </View>
         ) : (
           <FlatList
-            data={captures}
-            keyExtractor={(item) => item.id}
+            data={currentData}
+            keyExtractor={(item) => String(item.id)}
             numColumns={3}
             contentContainerStyle={styles.grid}
             renderItem={renderItem}
             refreshControl={
               <RefreshControl
-                refreshing={refreshing}
+                refreshing={isCurrentRefreshing}
                 onRefresh={handleRefresh}
                 tintColor={COLORS.accent}
                 colors={[COLORS.accent]}
@@ -150,14 +313,18 @@ export default function GalleryScreen({ navigation }) {
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Ionicons
-                  name="images-outline"
+                  name={activeTab === 'cloud' ? 'cloud-outline' : 'images-outline'}
                   size={54}
                   color={COLORS.accent}
                   style={styles.emptyIcon}
                 />
-                <Text style={styles.emptyTitle}>No Photos Saved Yet</Text>
+                <Text style={styles.emptyTitle}>
+                  {activeTab === 'cloud' ? 'No Cloud Captures Yet' : 'No Photos Saved Yet'}
+                </Text>
                 <Text style={styles.emptySubtitle}>
-                  Take photos with OurGpsCam to save watermarked images to your local device memory!
+                  {activeTab === 'cloud'
+                    ? 'Photos captured while connected are automatically uploaded and secured in your Supabase Cloud storage!'
+                    : 'Take photos with OurGpsCam to save watermarked images to your local device memory!'}
                 </Text>
                 <TouchableOpacity
                   style={styles.takePhotoBtn}
@@ -268,6 +435,37 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#1a1a1f',
   },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#161922',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    padding: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#232936',
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: 9,
+  },
+  tabBtnActive: {
+    backgroundColor: COLORS.accent,
+  },
+  tabText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tabTextActive: {
+    color: '#000',
+    fontWeight: '700',
+  },
   backBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -309,6 +507,10 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 6,
     backgroundColor: '#161922',
+  },
+  thumbPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   thumbBadge: {
     position: 'absolute',

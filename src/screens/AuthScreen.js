@@ -138,9 +138,16 @@ export default function AuthScreen() {
       if (
         msg.includes('svcet.ac.in') ||
         msg.includes('P0001') ||
-        msg.toLowerCase().includes('domain')
+        msg.toLowerCase().includes('domain') ||
+        msg.toLowerCase().includes('database error saving new user') ||
+        msg.toLowerCase().includes('unexpected_failure')
       ) {
         setError(`Only @${ALLOWED_EMAIL_DOMAIN} college email addresses can access this app.`);
+      } else if (
+        msg.toLowerCase().includes('over_email_send_rate_limit') ||
+        msg.toLowerCase().includes('rate limit exceeded')
+      ) {
+        setError('Signup rate limit exceeded. Please wait a few moments before trying again.');
       } else if (
         msg.toLowerCase().includes('failed to fetch') ||
         msg.toLowerCase().includes('network') ||
