@@ -13,6 +13,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { authStorage } from '../lib/supabase';
 import { COLORS } from '../constants/theme';
 
 // ---------------------------------------------------------------------------
@@ -39,7 +40,17 @@ export default function AuthScreen() {
   const { signIn, signUp } = useAuth();
 
   const [mode, setMode] = useState('signin'); // 'signin' | 'signup'
-  const [email, setEmail] = useState('');
+  // Synchronously initialize email from localStorage on web to eliminate empty-field flash
+  const [email, setEmail] = useState(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
+      try {
+        return window.localStorage.getItem(REMEMBERED_EMAIL_KEY) || '';
+      } catch {
+        return '';
+      }
+    }
+    return '';
+  });
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -47,11 +58,11 @@ export default function AuthScreen() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Hydrate remembered college email on mount
+  // Hydrate remembered college email on mount (for native or if web was cold-started)
   useEffect(() => {
     (async () => {
       try {
-        const savedEmail = await AsyncStorage.getItem(REMEMBERED_EMAIL_KEY);
+        const savedEmail = await authStorage.getItem(REMEMBERED_EMAIL_KEY);
         if (savedEmail) {
           setEmail(savedEmail);
           setRememberMe(true);
@@ -110,9 +121,9 @@ export default function AuthScreen() {
         await signUp(cleanEmail, password);
         // Persist or remove remembered email
         if (rememberMe) {
-          await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, cleanEmail);
+          await authStorage.setItem(REMEMBERED_EMAIL_KEY, cleanEmail);
         } else {
-          await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+          await authStorage.removeItem(REMEMBERED_EMAIL_KEY);
         }
 
         // Supabase may require email confirmation depending on project settings.
@@ -126,9 +137,9 @@ export default function AuthScreen() {
         await signIn(cleanEmail, password);
         // Persist or remove remembered email
         if (rememberMe) {
-          await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, cleanEmail);
+          await authStorage.setItem(REMEMBERED_EMAIL_KEY, cleanEmail);
         } else {
-          await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+          await authStorage.removeItem(REMEMBERED_EMAIL_KEY);
         }
         // On success, App.js detects the new session and navigates automatically.
       }
@@ -233,6 +244,9 @@ export default function AuthScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="email-address"
+            autoComplete="email"
+            textContentType="emailAddress"
+            inputMode="email"
             placeholder={`yourname@${ALLOWED_EMAIL_DOMAIN}`}
             placeholderTextColor="#555"
             returnKeyType="next"
@@ -249,6 +263,8 @@ export default function AuthScreen() {
             value={password}
             onChangeText={setPassword}
             secureTextEntry
+            autoComplete={isSignUp ? 'new-password' : 'current-password'}
+            textContentType={isSignUp ? 'newPassword' : 'password'}
             placeholder={isSignUp ? 'At least 6 characters' : '••••••••'}
             placeholderTextColor="#555"
             returnKeyType={isSignUp ? 'next' : 'done'}
@@ -264,6 +280,8 @@ export default function AuthScreen() {
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 secureTextEntry
+                autoComplete="new-password"
+                textContentType="newPassword"
                 placeholder="Repeat your password"
                 placeholderTextColor="#555"
                 returnKeyType="done"

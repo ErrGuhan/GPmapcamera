@@ -18,21 +18,27 @@ function WatermarkBadge({
   mapUri,
   style,
 }) {
+  const isInterim = address?.isInterim;
   const city = address?.city || 'Current Location';
   const region = address?.region || '';
   const country = address?.country || '';
   const flag = address?.flag || '';
 
-  // Build the title line, e.g. "Pangur, Puducherry, India 🇮🇳"
+  // Build the title line, e.g. "Pangur, Puducherry, India 🇮🇳" or "GPS Pinpointed"
   const titleParts = [city, region, country].filter(Boolean);
   const titleString = titleParts.length > 0 ? titleParts.join(', ') : 'Current Location';
 
   // Sub-location / street line
   const street = address?.street || '';
   const postalCode = address?.postalCode ? ` ${address.postalCode}` : '';
-  const subAddress = street
-    ? `${street}, ${city}${postalCode}, ${country}`
-    : address?.fullAddress || titleString;
+  let subAddress = address?.fullAddress || '';
+  if (isInterim) {
+    subAddress = 'Resolving address...';
+  } else if (street) {
+    subAddress = `${street}, ${city}${postalCode}, ${country}`;
+  } else if (!subAddress) {
+    subAddress = titleString;
+  }
 
   const latStr = coords?.latitude ? coords.latitude.toFixed(6) : '0.000000';
   const lngStr = coords?.longitude ? coords.longitude.toFixed(6) : '0.000000';

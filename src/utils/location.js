@@ -35,24 +35,22 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Formats a fallback address using raw coordinates when reverse geocoding is unavailable or timed out.
+ * Formats a clean interim fallback address while reverse geocoding is in progress or unavailable.
+ * Keeps coordinates in coords, avoiding duplicated/garbled text in the address lines.
  */
 function buildCoordinateFallbackAddress(coords) {
-  const latStr = coords?.latitude ? coords.latitude.toFixed(4) : '0.0000';
-  const lonStr = coords?.longitude ? coords.longitude.toFixed(4) : '0.0000';
-  const fullLat = coords?.latitude ? coords.latitude.toFixed(6) : '0.000000';
-  const fullLon = coords?.longitude ? coords.longitude.toFixed(6) : '0.000000';
   return {
-    city: `${latStr}°, ${lonStr}°`,
-    region: 'GPS Pinpointed',
+    city: 'GPS Pinpointed',
+    region: '',
     country: '',
     postalCode: '',
-    street: `Lat: ${fullLat}°, Long: ${fullLon}°`,
+    street: '',
     district: '',
     subregion: '',
     isoCountryCode: '',
     flag: '📍',
-    fullAddress: `Lat: ${fullLat}°, Long: ${fullLon}°`,
+    fullAddress: 'Resolving address...',
+    isInterim: true,
   };
 }
 

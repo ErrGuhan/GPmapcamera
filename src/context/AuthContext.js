@@ -31,17 +31,18 @@ export function AuthProvider({ children }) {
       if (mounted) setLoading(false);
     }, 5000);
 
-    // Hydrate session from AsyncStorage on mount
+    // Hydrate session from storage on mount
     supabase.auth
       .getSession()
       .then(({ data: { session } }) => {
         if (mounted) {
+          console.log('[OurGpsCam Auth] Hydrated session:', session ? `User ${session?.user?.email}` : 'None');
           setSession(session);
           setLoading(false);
         }
       })
       .catch((err) => {
-        console.warn('Auth session hydration warning:', err);
+        console.warn('[OurGpsCam Auth] Session hydration warning:', err);
         if (mounted) setLoading(false);
       })
       .finally(() => {
@@ -51,8 +52,9 @@ export function AuthProvider({ children }) {
     // Keep session in sync with Supabase auth state changes
     // (token refresh, sign-out from another tab, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         if (mounted) {
+          console.log('[OurGpsCam Auth] onAuthStateChange event:', event, 'user:', session?.user?.email ?? 'null');
           setSession(session);
           setLoading(false);
         }

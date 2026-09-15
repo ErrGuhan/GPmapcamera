@@ -35,6 +35,8 @@ const GOOGLE_STATIC_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY';
 export default function CameraScreen({ navigation }) {
   const cameraRef = useRef(null);
   const overlayRef = useRef(null);
+  const cameraSwitchTimerRef = useRef(null);
+  const cameraSwitchStartTimeRef = useRef(0);
 
   // Authentication session & actions
   const { user, signOut } = useAuth();
@@ -232,20 +234,28 @@ export default function CameraScreen({ navigation }) {
     if (Platform.OS === 'web') {
       if (isCameraSwitching) return;
       setIsCameraSwitching(true);
+      cameraSwitchStartTimeRef.current = Date.now();
 
       const next = facing === 'back' ? 'front' : 'back';
+      console.log(`[OurGpsCam Camera] Switch to ${next} started at ${cameraSwitchStartTimeRef.current}`);
       setToastMessage(`Camera: ${next === 'back' ? 'Rear' : 'Front'}`);
 
       // 1. Explicitly stop running tracks on existing stream
       stopAllWebCameraTracks();
 
-      // 2. Allow browser & Android camera HAL 150ms to release hardware handle
+      // Set fallback safety timeout (4000ms) to ensure HUD dismisses even if onCameraReady doesn't fire
+      if (cameraSwitchTimerRef.current) clearTimeout(cameraSwitchTimerRef.current);
+      cameraSwitchTimerRef.current = setTimeout(() => {
+        setIsCameraSwitching(false);
+        setToastMessage(null);
+      }, 4000);
+
+      // 2. Allow browser & Android camera HAL 80ms to release hardware handle before mounting next facing
       setTimeout(() => {
         setFacing(next);
         setCameraVersion((v) => v + 1);
-        setIsCameraSwitching(false);
         setTimeout(() => setToastMessage(null), 1200);
-      }, 150);
+      }, 80);
     } else {
       setFacing((prev) => {
         const next = prev === 'back' ? 'front' : 'back';
@@ -256,9 +266,24 @@ export default function CameraScreen({ navigation }) {
     }
   }, [facing, isCameraSwitching, stopAllWebCameraTracks]);
 
+  // Callback when camera stream is acquired and ready to render
+  const handleCameraReady = useCallback(() => {
+    const elapsed = Date.now() - cameraSwitchStartTimeRef.current;
+    console.log(`[OurGpsCam Camera] Camera ready for ${facing} (hardware stream acquired in ${elapsed}ms)`);
+    if (cameraSwitchTimerRef.current) {
+      clearTimeout(cameraSwitchTimerRef.current);
+      cameraSwitchTimerRef.current = null;
+    }
+    setIsCameraSwitching(false);
+  }, [facing]);
+
   // Gracefully handle rear camera mount errors on web
   const handleCameraMountError = useCallback((error) => {
     console.warn('[OurGpsCam] Camera mount error:', error?.nativeEvent || error);
+    if (cameraSwitchTimerRef.current) {
+      clearTimeout(cameraSwitchTimerRef.current);
+      cameraSwitchTimerRef.current = null;
+    }
     if (Platform.OS === 'web' && facing === 'back') {
       console.warn('[OurGpsCam] Rear camera unavailable or errored out, reverting to front camera');
       setToastMessage('Rear camera unavailable, switched back to front');
@@ -268,8 +293,9 @@ export default function CameraScreen({ navigation }) {
       setTimeout(() => {
         setFacing('front');
         setCameraVersion((v) => v + 1);
-        setIsCameraSwitching(false);
-      }, 150);
+      }, 80);
+    } else {
+      setIsCameraSwitching(false);
     }
   }, [facing, stopAllWebCameraTracks]);
 
@@ -309,6 +335,64 @@ export default function CameraScreen({ navigation }) {
       setZoom(target2x);
     }
   }, [get2xZoomFraction]);
+
+  // ─── Web Zoom Bypass ────────────────────────────────────────────────────────
+  // expo-camera's web stack has a bug in convertNormalizedSetting(): it checks
+  // `if (!value) return;` which evaluates to true when value === 0, causing
+  // zoom=0 (1x) to pass undefined to applyConstraints — a silent no-op.
+  // Additionally, useWebCameraStream's capability diff-check means a second
+  // tap of 1x is completely skipped (0 !== 0 is false). The physical camera
+  // track stays locked at 2x until some unrelated re-render triggers a full
+  // capability sync.
+  //
+  // Fix: on every zoom state change (web only), directly find the live
+  // MediaStreamTrack, read its hardware zoom range, convert our normalized
+  // expo-camera fraction [0..1] → hardware [min..max], then call
+  // applyConstraints directly. This completely bypasses expo-camera's path.
+  // iOS/Android are unaffected (Platform guard).
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+    // Use requestAnimationFrame so the MediaStream is guaranteed live
+    // before we attempt to read capabilities from it.
+    const frameId = requestAnimationFrame(() => {
+      try {
+        const videoEls = document.querySelectorAll('video');
+        for (const v of videoEls) {
+          const track = v.srcObject?.getVideoTracks?.()[0];
+          if (!track) continue;
+
+          const caps = track.getCapabilities?.();
+          if (!caps?.zoom) continue;
+
+          const { min = 1, max = 1 } = caps.zoom;
+
+          // Convert expo-camera's normalized fraction [0..1] → hardware [min..max].
+          // zoom=0 correctly maps to `min` (true 1x), not undefined.
+          const hwZoom = min + zoom * (max - min);
+          const clamped = Math.min(max, Math.max(min, hwZoom));
+
+          console.log(
+            `[OurGpsCam] Web zoom bypass: normalized=${zoom}, hw=${clamped.toFixed(3)} (range ${min}-${max})`
+          );
+
+          track
+            .applyConstraints({ advanced: [{ zoom: clamped }] })
+            .catch((e) => {
+              console.warn('[OurGpsCam] Direct zoom applyConstraints failed:', e?.message || e);
+            });
+
+          // Only the first live track matters — stop after the first hit.
+          break;
+        }
+      } catch (e) {
+        console.warn('[OurGpsCam] Web zoom bypass error:', e?.message || e);
+      }
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [zoom]); // Re-runs on every zoom state change (1x↔2x transitions)
+  // ────────────────────────────────────────────────────────────────────────────
 
   // Vertical Exposure Slider PanResponder with render-throttling
   const exposureRef = useRef(exposure);
@@ -585,17 +669,28 @@ export default function CameraScreen({ navigation }) {
     <View style={styles.container}>
       <View style={styles.appShell}>
         {/* Live Camera Viewfinder */}
-        {!isCameraSwitching && (
-          <CameraView
-            key={Platform.OS === 'web' ? `camera-${facing}-${cameraVersion}` : undefined}
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            facing={facing}
-            flash={flash}
-            zoom={zoom}
-            isPinchToZoomEnabled={true}
-            onMountError={handleCameraMountError}
-          />
+        <CameraView
+          key={Platform.OS === 'web' ? `camera-${facing}-${cameraVersion}` : undefined}
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing={facing}
+          flash={flash}
+          zoom={zoom}
+          isPinchToZoomEnabled={true}
+          onCameraReady={handleCameraReady}
+          onMountError={handleCameraMountError}
+        />
+
+        {/* Camera Switching Loading HUD */}
+        {isCameraSwitching && (
+          <View style={styles.cameraSwitchingOverlay} pointerEvents="none">
+            <View style={styles.cameraSwitchingCard}>
+              <ActivityIndicator size="large" color={COLORS.accent} />
+              <Text style={styles.cameraSwitchingText}>
+                Switching to {facing === 'back' ? 'Rear' : 'Front'} Camera...
+              </Text>
+            </View>
+          </View>
         )}
 
         {/* Grid Lines Overlay (Proper Rule-of-Thirds 3x3) */}
@@ -1558,5 +1653,30 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+
+  // Camera Switching HUD
+  cameraSwitchingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+  },
+  cameraSwitchingCard: {
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    borderRadius: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  cameraSwitchingText: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 12,
+    letterSpacing: 0.3,
   },
 });
